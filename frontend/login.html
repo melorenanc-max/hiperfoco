@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hiperfoco — Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--primary:#4F46E5;--primary-light:#6366F1;--bg:#F8F9FC;--text:#111827;--text-2:#4B5563;--text-3:#9CA3AF;--border:rgba(0,0,0,0.08);--radius:12px;--shadow:0 8px 32px rgba(0,0,0,0.1)}
+    body{font-family:'DM Sans',sans-serif;background:var(--bg);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .login-card{background:#fff;border-radius:20px;box-shadow:var(--shadow);padding:48px 40px;width:100%;max-width:420px;text-align:center}
+    .login-logo{font-size:2.5rem;margin-bottom:8px}
+    .login-brand{font-family:'Syne',sans-serif;font-size:1.8rem;font-weight:800;color:var(--text);letter-spacing:-1px;margin-bottom:6px}
+    .login-sub{font-size:0.9rem;color:var(--text-3);margin-bottom:36px;line-height:1.5}
+    .btn-google{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;padding:14px 20px;background:#fff;border:2px solid var(--border);border-radius:12px;font-family:'DM Sans',sans-serif;font-size:0.95rem;font-weight:500;color:var(--text);cursor:pointer;text-decoration:none;transition:all 0.2s;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+    .btn-google:hover{border-color:var(--primary);box-shadow:0 4px 16px rgba(79,70,229,0.15);transform:translateY(-1px)}
+    .google-icon{width:20px;height:20px;flex-shrink:0}
+    .login-footer{margin-top:32px;font-size:0.78rem;color:var(--text-3);line-height:1.6}
+    .erro-msg{background:#FEF2F2;color:#EF4444;border-radius:8px;padding:10px 14px;font-size:0.84rem;margin-bottom:20px;display:none}
+    .erro-msg.show{display:block}
+    .divider{display:flex;align-items:center;gap:12px;margin:24px 0;color:var(--text-3);font-size:0.8rem}
+    .divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--border)}
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-logo">⚡</div>
+    <div class="login-brand">Hiperfoco</div>
+    <div class="login-sub">Controle de estudos para concursos públicos</div>
+
+    <div class="erro-msg" id="erro-msg">Erro ao fazer login. Tente novamente.</div>
+
+    <a href="/auth/google" class="btn-google">
+      <svg class="google-icon" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+      Entrar com Google
+    </a>
+
+    <div class="login-footer">
+      Ao entrar, você concorda com o uso da plataforma.<br>Seus dados ficam salvos na sua conta.
+    </div>
+  </div>
+  <script>
+    if (new URLSearchParams(location.search).get('erro')) {
+      document.getElementById('erro-msg').classList.add('show');
+    }
+  </script>
+</body>
+</html>
