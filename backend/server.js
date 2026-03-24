@@ -6,6 +6,16 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const db = require('./db');
 
 
+// ── BANCAS DEFAULT ────────────────────────────────────────────────────────────
+const BANCAS_DEFAULT = ['CESPE/CEBRASPE', 'FGV', 'FCC', 'VUNESP', 'FUNRIO', 'IBFC', 'QUADRIX'];
+
+function ensureBancasDefault(userId) {
+  const insert = db.prepare('INSERT OR IGNORE INTO bancas (user_id, nome) VALUES (?, ?)');
+  for (const nome of BANCAS_DEFAULT) {
+    insert.run(userId, nome);
+  }
+}
+
 // ── HELPERS DE DATA (fuso de Brasília UTC-3) ──────────────────────────────────
 function getBrasiliaDate() {
   return new Date(Date.now() - 3 * 60 * 60 * 1000);
@@ -48,6 +58,7 @@ passport.use(new GoogleStrategy({
       );
       user = db.prepare('SELECT * FROM usuarios WHERE id = ?').get(info.lastInsertRowid);
     }
+    ensureBancasDefault(user.id);
     return done(null, user);
   } catch(e) {
     return done(e);
@@ -96,6 +107,7 @@ app.get('/auth/logout', (req, res) => {
 
 app.get('/auth/me', (req, res) => {
   if (req.isAuthenticated()) {
+    ensureBancasDefault(req.user.id);
     res.json({ autenticado: true, usuario: { id: req.user.id, nome: req.user.nome, email: req.user.email, foto: req.user.foto } });
   } else {
     res.json({ autenticado: false });
@@ -137,10 +149,23 @@ app.post('/api/config/:key', requireAuth, (req, res) => {
 
 // ── BANCAS ────────────────────────────────────────────────────────────────────
 app.get('/api/bancas', requireAuth, (req, res) => {
+  const bancas = db.prepare('SELECT * FROM bancas WHERE user_id=? ORDER BY nome').all(req.user.id);
+  res.json(bancas);
+});
+app.post('/api/bancas', requireAuth, (req, res) => {
+  const { nome } = req.body;
+  if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
   try {
-    const usadas = db.prepare("SELECT DISTINCT banca FROM sessoes WHERE user_id=? AND banca IS NOT NULL AND banca != '' ORDER BY banca").all(req.user.id).map(r => r.banca);
-    res.json(usadas);
-  } catch(e) { res.json([]); }
+    const info = db.prepare('INSERT OR IGNORE INTO bancas (user_id, nome) VALUES (?, ?)').run(req.user.id, nome.trim());
+    const banca = db.prepare('SELECT * FROM bancas WHERE user_id=? AND nome=?').get(req.user.id, nome.trim());
+    res.json(banca);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.delete('/api/bancas/:id', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM bancas WHERE id=? AND user_id=?').run(req.params.id, req.user.id);
+  res.json({ ok: true });
 });
 
 // ── DISCIPLINAS ───────────────────────────────────────────────────────────────
@@ -157,8 +182,8 @@ app.post('/api/disciplinas', requireAuth, (req, res) => {
   res.json({ id: info.lastInsertRowid, nome });
 });
 app.put('/api/disciplinas/:id', requireAuth, (req, res) => {
-  const { nome, estrategia='', teoria_material='', teoria_link='', resumo_tipo='', resumo_descricao='', resumo_link='' } = req.body;
-  db.prepare('UPDATE disciplinas SET nome=?,estrategia=?,teoria_material=?,teoria_link=?,resumo_tipo=?,resumo_descricao=?,resumo_link=? WHERE id=? AND user_id=?').run(nome,estrategia,teoria_material,teoria_link,resumo_tipo,resumo_descricao,resumo_link,req.params.id,req.user.id);
+  const { nome, estrategia='', teoria_material='', teoria_link='', resumo_tipo='', resumo_descricao='', resumo_link='', nivel_conhecimento=null } = req.body;
+  db.prepare('UPDATE disciplinas SET nome=?,estrategia=?,teoria_material=?,teoria_link=?,resumo_tipo=?,resumo_descricao=?,resumo_link=?,nivel_conhecimento=? WHERE id=? AND user_id=?').run(nome,estrategia,teoria_material,teoria_link,resumo_tipo,resumo_descricao,resumo_link,nivel_conhecimento,req.params.id,req.user.id);
   res.json({ ok: true });
 });
 app.delete('/api/disciplinas/:id', requireAuth, (req, res) => {
@@ -224,9 +249,38 @@ app.put('/api/assuntos/reordenar', requireAuth, (req, res) => {
   db.transaction(() => { for (const i of itens) upd.run(i.ordem, i.parent_id||null, i.id); })();
   res.json({ ok: true });
 });
+// Endpoint do modal "Editar assuntos": salva lista completa (nova/atualizada) de uma vez
+app.put('/api/assuntos/reordenar-completo', requireAuth, (req, res) => {
+  const { disciplina_id, itens } = req.body;
+  if (!disciplina_id || !Array.isArray(itens)) return res.status(400).json({ error: 'Dados inválidos' });
+  db.transaction(() => {
+    // Deleta todos e reinsere em ordem para simplificar
+    // (manter IDs existentes, criar novos para id=null)
+    const idMap = {}; // mapeamento de ids temporários negativos → ids reais
+    for (const it of itens) {
+      if (it.id && it.id > 0) {
+        // Atualiza existente
+        const realParent = it.parent_id ? (idMap[it.parent_id] || it.parent_id) : null;
+        db.prepare('UPDATE assuntos SET nome=?,ordem=?,parent_id=? WHERE id=? AND disciplina_id=?').run(it.nome, it.ordem, realParent, it.id, disciplina_id);
+        idMap[it.id] = it.id;
+      } else {
+        // Novo assunto
+        const realParent = it.parent_id ? (idMap[it.parent_id] || null) : null;
+        const info = db.prepare('INSERT INTO assuntos (nome, disciplina_id, parent_id, ordem) VALUES (?,?,?,?)').run(it.nome, disciplina_id, realParent, it.ordem);
+        if (it.id) idMap[it.id] = info.lastInsertRowid;
+      }
+    }
+  })();
+  res.json({ ok: true });
+});
 app.put('/api/assuntos/:id', requireAuth, (req, res) => {
   const { nome, disciplina_id, codigo='', parent_id } = req.body;
-  db.prepare('UPDATE assuntos SET nome=?,disciplina_id=?,codigo=?,parent_id=? WHERE id=?').run(nome,disciplina_id,codigo,parent_id||null,req.params.id);
+  if (nome !== undefined) {
+    db.prepare('UPDATE assuntos SET nome=?,codigo=?,parent_id=? WHERE id=?').run(nome, codigo, parent_id||null, req.params.id);
+  }
+  if (disciplina_id !== undefined) {
+    db.prepare('UPDATE assuntos SET disciplina_id=? WHERE id=?').run(disciplina_id, req.params.id);
+  }
   res.json({ ok: true });
 });
 app.delete('/api/assuntos/:id', requireAuth, (req, res) => {
@@ -298,22 +352,78 @@ app.get('/api/sessoes/:id', requireAuth, (req, res) => {
   res.json({ ...s, assuntos });
 });
 app.post('/api/sessoes', requireAuth, (req, res) => {
-  const { data, concurso_id, disciplina_id, tipo, total_questoes=0, acertos=0, banca='', nota_liquida=null, ranking='', controle_emocional=null, gestao_tempo=null, observacoes='', assunto_ids=[] } = req.body;
-  if (!data||!disciplina_id||!tipo) return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+  const {
+    data, concurso_id, disciplina_id, tipo,
+    total_questoes=0, acertos=0, banca='', nota_liquida=null, ranking='',
+    controle_emocional=null, gestao_tempo=null, observacoes='', assunto_ids=[],
+    questoes_feitas=0, questoes_acertadas=0, tempo_gasto=null, como_foi='',
+    planejamento_id=null, ciclo_item_id=null
+  } = req.body;
+  if (!data || !disciplina_id || !tipo) return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+  // Campos novos têm precedência; fallback para campos legados
+  const qFeitas = questoes_feitas || total_questoes || 0;
+  const qAcertadas = questoes_acertadas || acertos || 0;
   const id = db.transaction(() => {
-    const info = db.prepare('INSERT INTO sessoes (user_id,data,concurso_id,disciplina_id,tipo,total_questoes,acertos,banca,nota_liquida,ranking,controle_emocional,gestao_tempo,observacoes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').run(req.user.id,data,concurso_id||null,disciplina_id,tipo,total_questoes,acertos,banca,nota_liquida,ranking,controle_emocional,gestao_tempo,observacoes);
+    const info = db.prepare(`
+      INSERT INTO sessoes
+        (user_id,data,concurso_id,disciplina_id,tipo,
+         total_questoes,acertos,banca,nota_liquida,ranking,
+         controle_emocional,gestao_tempo,observacoes,
+         questoes_feitas,questoes_acertadas,tempo_gasto,como_foi)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      req.user.id, data, concurso_id||null, disciplina_id, tipo,
+      qFeitas, qAcertadas, banca, nota_liquida, ranking,
+      controle_emocional, gestao_tempo, observacoes,
+      qFeitas, qAcertadas, tempo_gasto, como_foi
+    );
     const sid = info.lastInsertRowid;
-    for (const aid of assunto_ids) { try { db.prepare('INSERT INTO sessao_assuntos (sessao_id,assunto_id) VALUES (?,?)').run(sid,aid); } catch(e){} }
+    for (const aid of assunto_ids) {
+      try { db.prepare('INSERT INTO sessao_assuntos (sessao_id,assunto_id) VALUES (?,?)').run(sid, aid); } catch(e){}
+    }
+    // Marca ciclo_item como realizado, se fornecido
+    if (ciclo_item_id) {
+      db.prepare('UPDATE ciclo_itens SET realizado=1 WHERE id=? AND user_id=?').run(ciclo_item_id, req.user.id);
+    }
+    // Adiciona banca ao catálogo do usuário se nova
+    if (banca && banca.trim()) {
+      db.prepare('INSERT OR IGNORE INTO bancas (user_id, nome) VALUES (?, ?)').run(req.user.id, banca.trim());
+    }
     return sid;
   })();
   res.json({ id });
 });
 app.put('/api/sessoes/:id', requireAuth, (req, res) => {
-  const { data, concurso_id, disciplina_id, tipo, total_questoes, acertos, banca, nota_liquida, ranking, controle_emocional, gestao_tempo, observacoes, assunto_ids=[] } = req.body;
+  const {
+    data, concurso_id, disciplina_id, tipo,
+    total_questoes, acertos, banca, nota_liquida, ranking,
+    controle_emocional, gestao_tempo, observacoes, assunto_ids=[],
+    questoes_feitas, questoes_acertadas, tempo_gasto, como_foi
+  } = req.body;
+  const qFeitas = questoes_feitas !== undefined ? questoes_feitas : (total_questoes || 0);
+  const qAcertadas = questoes_acertadas !== undefined ? questoes_acertadas : (acertos || 0);
   db.transaction(() => {
-    db.prepare('UPDATE sessoes SET data=?,concurso_id=?,disciplina_id=?,tipo=?,total_questoes=?,acertos=?,banca=?,nota_liquida=?,ranking=?,controle_emocional=?,gestao_tempo=?,observacoes=? WHERE id=? AND user_id=?').run(data,concurso_id||null,disciplina_id,tipo,total_questoes,acertos,banca,nota_liquida,ranking,controle_emocional,gestao_tempo,observacoes,req.params.id,req.user.id);
+    db.prepare(`
+      UPDATE sessoes SET
+        data=?,concurso_id=?,disciplina_id=?,tipo=?,
+        total_questoes=?,acertos=?,banca=?,nota_liquida=?,ranking=?,
+        controle_emocional=?,gestao_tempo=?,observacoes=?,
+        questoes_feitas=?,questoes_acertadas=?,tempo_gasto=?,como_foi=?
+      WHERE id=? AND user_id=?
+    `).run(
+      data, concurso_id||null, disciplina_id, tipo,
+      qFeitas, qAcertadas, banca, nota_liquida, ranking,
+      controle_emocional, gestao_tempo, observacoes,
+      qFeitas, qAcertadas, tempo_gasto, como_foi,
+      req.params.id, req.user.id
+    );
     db.prepare('DELETE FROM sessao_assuntos WHERE sessao_id=?').run(req.params.id);
-    for (const aid of assunto_ids) { try { db.prepare('INSERT INTO sessao_assuntos (sessao_id,assunto_id) VALUES (?,?)').run(req.params.id,aid); } catch(e){} }
+    for (const aid of assunto_ids) {
+      try { db.prepare('INSERT INTO sessao_assuntos (sessao_id,assunto_id) VALUES (?,?)').run(req.params.id, aid); } catch(e){}
+    }
+    if (banca && banca.trim()) {
+      db.prepare('INSERT OR IGNORE INTO bancas (user_id, nome) VALUES (?, ?)').run(req.user.id, banca.trim());
+    }
   })();
   res.json({ ok: true });
 });
@@ -429,17 +539,43 @@ app.get('/api/ciclo/semanas', requireAuth, (req, res) => {
   res.json(db.prepare('SELECT DISTINCT semana_inicio FROM ciclo_itens WHERE user_id=? ORDER BY semana_inicio DESC').all(req.user.id).map(r=>r.semana_inicio));
 });
 app.post('/api/ciclo/gerar', requireAuth, (req, res) => {
-  const { semana, sessoes } = req.body;
-  if (!semana||!sessoes) return res.status(400).json({ error: 'Dados obrigatórios' });
+  const { semana, sessoes, config={} } = req.body;
+  if (!semana || !sessoes) return res.status(400).json({ error: 'Dados obrigatórios' });
   db.transaction(() => {
-    db.prepare('DELETE FROM ciclo_config WHERE user_id=? AND semana_inicio=?').run(req.user.id,semana);
-    db.prepare('DELETE FROM ciclo_itens WHERE user_id=? AND semana_inicio=?').run(req.user.id,semana);
-    const configMap={};
-    for(const s of sessoes){if(!configMap[s.disciplina_id])configMap[s.disciplina_id]=0;configMap[s.disciplina_id]++;}
-    for(const[did,count]of Object.entries(configMap))db.prepare('INSERT INTO ciclo_config (user_id,disciplina_id,sessoes_por_semana,semana_inicio) VALUES (?,?,?,?)').run(req.user.id,did,count,semana);
-    sessoes.forEach((s,idx)=>{const aids=Array.isArray(s.assunto_ids)?s.assunto_ids.join(','):(s.assunto_ids||'');db.prepare('INSERT INTO ciclo_itens (user_id,semana_inicio,ordem,dia_semana,disciplina_id,assunto_ids,tipo,tempo_estimado,descricao,realizado,adiado) VALUES (?,?,?,?,?,?,?,?,?,0,0)').run(req.user.id,semana,idx+1,s.dia_semana??null,s.disciplina_id,aids,s.tipo||'',s.tempo_estimado||60,s.descricao||'');});
+    db.prepare('DELETE FROM ciclo_config WHERE user_id=? AND semana_inicio=?').run(req.user.id, semana);
+    db.prepare('DELETE FROM ciclo_itens WHERE user_id=? AND semana_inicio=?').run(req.user.id, semana);
+    // Salva configuração global do ciclo
+    if (config.horas_semana !== undefined) {
+      db.prepare(`
+        INSERT INTO ciclo_config (user_id,disciplina_id,sessoes_por_semana,semana_inicio,horas_semana,dias_estudo,inicio_semana,duracao_ciclo)
+        VALUES (?,0,0,?,?,?,?,?)
+        ON CONFLICT DO NOTHING
+      `).run(req.user.id, semana, config.horas_semana||null,
+             JSON.stringify(config.dias_estudo||[]),
+             config.inicio_semana||'segunda',
+             config.duracao_ciclo||7);
+    }
+    const configMap = {};
+    for (const s of sessoes) { if (!configMap[s.disciplina_id]) configMap[s.disciplina_id] = 0; configMap[s.disciplina_id]++; }
+    for (const [did, count] of Object.entries(configMap)) {
+      db.prepare('INSERT INTO ciclo_config (user_id,disciplina_id,sessoes_por_semana,semana_inicio) VALUES (?,?,?,?)').run(req.user.id, did, count, semana);
+    }
+    sessoes.forEach((s, idx) => {
+      const aids = Array.isArray(s.assunto_ids) ? s.assunto_ids.join(',') : (s.assunto_ids || '');
+      db.prepare(`
+        INSERT INTO ciclo_itens
+          (user_id,semana_inicio,ordem,dia_semana,disciplina_id,assunto_ids,tipo,tempo_estimado,descricao,
+           quantidade_questoes,link_caderno,comando,hiperdica,numero,plan_tarefa_id,realizado,adiado)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0)
+      `).run(
+        req.user.id, semana, idx+1, s.dia_semana??null, s.disciplina_id, aids,
+        s.tipo||'', s.tempo_estimado||60, s.descricao||'',
+        s.quantidade_questoes||0, s.link_caderno||'', s.comando||'', s.hiperdica||'',
+        s.numero||idx+1, s.plan_tarefa_id||null
+      );
+    });
   })();
-  res.json({ok:true});
+  res.json({ ok: true });
 });
 app.post('/api/ciclo/duplicar', requireAuth, (req, res) => {
   const { semana_origem, semana_destino } = req.body;
@@ -448,22 +584,42 @@ app.post('/api/ciclo/duplicar', requireAuth, (req, res) => {
     db.prepare('DELETE FROM ciclo_itens WHERE user_id=? AND semana_inicio=?').run(req.user.id,semana_destino);
     const configs=db.prepare('SELECT * FROM ciclo_config WHERE user_id=? AND semana_inicio=?').all(req.user.id,semana_origem);
     for(const c of configs)db.prepare('INSERT INTO ciclo_config (user_id,disciplina_id,sessoes_por_semana,semana_inicio) VALUES (?,?,?,?)').run(req.user.id,c.disciplina_id,c.sessoes_por_semana,semana_destino);
-    const itens=db.prepare('SELECT * FROM ciclo_itens WHERE user_id=? AND semana_inicio=?').all(req.user.id,semana_origem);
-    for(const i of itens)db.prepare('INSERT INTO ciclo_itens (user_id,semana_inicio,ordem,dia_semana,disciplina_id,assunto_ids,tipo,tempo_estimado,descricao,realizado,adiado) VALUES (?,?,?,?,?,?,?,?,?,0,0)').run(req.user.id,semana_destino,i.ordem,i.dia_semana,i.disciplina_id,i.assunto_ids,i.tipo,i.tempo_estimado,i.descricao);
+    const itens = db.prepare('SELECT * FROM ciclo_itens WHERE user_id=? AND semana_inicio=?').all(req.user.id, semana_origem);
+    for (const i of itens) {
+      db.prepare(`
+        INSERT INTO ciclo_itens
+          (user_id,semana_inicio,ordem,dia_semana,disciplina_id,assunto_ids,tipo,tempo_estimado,descricao,
+           quantidade_questoes,link_caderno,comando,hiperdica,numero,plan_tarefa_id,realizado,adiado)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0)
+      `).run(
+        req.user.id, semana_destino, i.ordem, i.dia_semana, i.disciplina_id, i.assunto_ids,
+        i.tipo, i.tempo_estimado, i.descricao,
+        i.quantidade_questoes||0, i.link_caderno||'', i.comando||'', i.hiperdica||'',
+        i.numero||i.ordem, i.plan_tarefa_id||null
+      );
+    }
   })();
   res.json({ok:true});
 });
 app.put('/api/ciclo/item/:id', requireAuth, (req, res) => {
-  const { realizado, adiado, ordem, dia_semana, assunto_ids, tipo, tempo_estimado, descricao } = req.body;
-  if(realizado!==undefined)db.prepare('UPDATE ciclo_itens SET realizado=? WHERE id=? AND user_id=?').run(realizado?1:0,req.params.id,req.user.id);
-  if(adiado!==undefined)db.prepare('UPDATE ciclo_itens SET adiado=? WHERE id=? AND user_id=?').run(adiado?1:0,req.params.id,req.user.id);
-  if(ordem!==undefined)db.prepare('UPDATE ciclo_itens SET ordem=? WHERE id=? AND user_id=?').run(ordem,req.params.id,req.user.id);
-  if(dia_semana!==undefined)db.prepare('UPDATE ciclo_itens SET dia_semana=? WHERE id=? AND user_id=?').run(dia_semana,req.params.id,req.user.id);
-  if(assunto_ids!==undefined)db.prepare('UPDATE ciclo_itens SET assunto_ids=? WHERE id=? AND user_id=?').run(Array.isArray(assunto_ids)?assunto_ids.join(','):assunto_ids,req.params.id,req.user.id);
-  if(tipo!==undefined)db.prepare('UPDATE ciclo_itens SET tipo=? WHERE id=? AND user_id=?').run(tipo,req.params.id,req.user.id);
-  if(tempo_estimado!==undefined)db.prepare('UPDATE ciclo_itens SET tempo_estimado=? WHERE id=? AND user_id=?').run(tempo_estimado,req.params.id,req.user.id);
-  if(descricao!==undefined)db.prepare('UPDATE ciclo_itens SET descricao=? WHERE id=? AND user_id=?').run(descricao,req.params.id,req.user.id);
-  res.json({ok:true});
+  const {
+    realizado, adiado, ordem, dia_semana, assunto_ids, tipo, tempo_estimado, descricao,
+    quantidade_questoes, link_caderno, comando, hiperdica, numero
+  } = req.body;
+  if (realizado !== undefined) db.prepare('UPDATE ciclo_itens SET realizado=? WHERE id=? AND user_id=?').run(realizado?1:0, req.params.id, req.user.id);
+  if (adiado !== undefined) db.prepare('UPDATE ciclo_itens SET adiado=? WHERE id=? AND user_id=?').run(adiado?1:0, req.params.id, req.user.id);
+  if (ordem !== undefined) db.prepare('UPDATE ciclo_itens SET ordem=? WHERE id=? AND user_id=?').run(ordem, req.params.id, req.user.id);
+  if (dia_semana !== undefined) db.prepare('UPDATE ciclo_itens SET dia_semana=? WHERE id=? AND user_id=?').run(dia_semana, req.params.id, req.user.id);
+  if (assunto_ids !== undefined) db.prepare('UPDATE ciclo_itens SET assunto_ids=? WHERE id=? AND user_id=?').run(Array.isArray(assunto_ids)?assunto_ids.join(','):assunto_ids, req.params.id, req.user.id);
+  if (tipo !== undefined) db.prepare('UPDATE ciclo_itens SET tipo=? WHERE id=? AND user_id=?').run(tipo, req.params.id, req.user.id);
+  if (tempo_estimado !== undefined) db.prepare('UPDATE ciclo_itens SET tempo_estimado=? WHERE id=? AND user_id=?').run(tempo_estimado, req.params.id, req.user.id);
+  if (descricao !== undefined) db.prepare('UPDATE ciclo_itens SET descricao=? WHERE id=? AND user_id=?').run(descricao, req.params.id, req.user.id);
+  if (quantidade_questoes !== undefined) db.prepare('UPDATE ciclo_itens SET quantidade_questoes=? WHERE id=? AND user_id=?').run(quantidade_questoes, req.params.id, req.user.id);
+  if (link_caderno !== undefined) db.prepare('UPDATE ciclo_itens SET link_caderno=? WHERE id=? AND user_id=?').run(link_caderno, req.params.id, req.user.id);
+  if (comando !== undefined) db.prepare('UPDATE ciclo_itens SET comando=? WHERE id=? AND user_id=?').run(comando, req.params.id, req.user.id);
+  if (hiperdica !== undefined) db.prepare('UPDATE ciclo_itens SET hiperdica=? WHERE id=? AND user_id=?').run(hiperdica, req.params.id, req.user.id);
+  if (numero !== undefined) db.prepare('UPDATE ciclo_itens SET numero=? WHERE id=? AND user_id=?').run(numero, req.params.id, req.user.id);
+  res.json({ ok: true });
 });
 app.delete('/api/ciclo/item/:id', requireAuth, (req, res) => {
   db.prepare('DELETE FROM ciclo_itens WHERE id=? AND user_id=?').run(req.params.id,req.user.id);
@@ -471,9 +627,37 @@ app.delete('/api/ciclo/item/:id', requireAuth, (req, res) => {
 });
 app.put('/api/ciclo/reordenar', requireAuth, (req, res) => {
   const { itens } = req.body;
-  const upd=db.prepare('UPDATE ciclo_itens SET ordem=?,dia_semana=? WHERE id=? AND user_id=?');
-  db.transaction(()=>{for(const i of itens)upd.run(i.ordem,i.dia_semana??null,i.id,req.user.id);})();
-  res.json({ok:true});
+  const upd = db.prepare('UPDATE ciclo_itens SET ordem=?,dia_semana=? WHERE id=? AND user_id=?');
+  db.transaction(() => { for (const i of itens) upd.run(i.ordem, i.dia_semana??null, i.id, req.user.id); })();
+  res.json({ ok: true });
+});
+
+// ── VIRADAS DE CICLO ──────────────────────────────────────────────────────────
+app.get('/api/ciclo/viradas', requireAuth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM ciclo_viradas WHERE user_id=? ORDER BY data_virada DESC').all(req.user.id));
+});
+app.post('/api/ciclo/virada', requireAuth, (req, res) => {
+  const { data_virada, tarefas_concluidas=0, tarefas_nao_concluidas=0 } = req.body;
+  if (!data_virada) return res.status(400).json({ error: 'data_virada obrigatória' });
+  const info = db.prepare('INSERT INTO ciclo_viradas (user_id,data_virada,tarefas_concluidas,tarefas_nao_concluidas) VALUES (?,?,?,?)').run(req.user.id, data_virada, tarefas_concluidas, tarefas_nao_concluidas);
+  res.json({ id: info.lastInsertRowid });
+});
+
+// ── CICLO CONFIG GLOBAL ───────────────────────────────────────────────────────
+app.get('/api/ciclo/config-global', requireAuth, (req, res) => {
+  // Busca a config global (disciplina_id=0) da semana mais recente
+  const cfg = db.prepare("SELECT * FROM ciclo_config WHERE user_id=? AND disciplina_id=0 ORDER BY semana_inicio DESC LIMIT 1").get(req.user.id);
+  res.json(cfg || {});
+});
+app.put('/api/ciclo/config-global', requireAuth, (req, res) => {
+  const { horas_semana, dias_estudo, inicio_semana, duracao_ciclo } = req.body;
+  const semana = getMondayBrasilia();
+  // Upsert: remove a config global existente desta semana e reinsere
+  db.prepare("DELETE FROM ciclo_config WHERE user_id=? AND disciplina_id=0 AND semana_inicio=?").run(req.user.id, semana);
+  db.prepare("INSERT INTO ciclo_config (user_id,disciplina_id,sessoes_por_semana,semana_inicio,horas_semana,dias_estudo,inicio_semana,duracao_ciclo) VALUES (?,0,0,?,?,?,?,?)").run(
+    req.user.id, semana, horas_semana||null, JSON.stringify(dias_estudo||[]), inicio_semana||'segunda', duracao_ciclo||7
+  );
+  res.json({ ok: true });
 });
 
 // ── PLANEJAMENTOS ─────────────────────────────────────────────────────────────
@@ -490,8 +674,14 @@ app.get('/api/planejamentos/:id', requireAuth, (req, res) => {
   if(!p) return res.status(404).json({error:'Não encontrado'});
   const disciplinas=db.prepare('SELECT pd.*,d.nome as disciplina_nome FROM plan_disciplinas pd JOIN disciplinas d ON pd.disciplina_id=d.id WHERE pd.planejamento_id=? ORDER BY pd.prova,d.nome').all(req.params.id).map(d=>{
     const assuntos=db.prepare('SELECT pa.assunto_id,a.nome,a.codigo,a.parent_id FROM plan_assuntos pa JOIN assuntos a ON pa.assunto_id=a.id WHERE pa.plan_disciplina_id=? ORDER BY a.codigo,a.nome').all(d.id);
-    const tarefas=db.prepare('SELECT * FROM plan_tarefas WHERE plan_disciplina_id=? ORDER BY ordem,created_at').all(d.id);
-    return{...d,assuntos,tarefas};
+    const tarefas = db.prepare('SELECT * FROM plan_tarefas WHERE plan_disciplina_id=? ORDER BY numero,ordem,created_at').all(d.id).map(t => {
+      const tIds = t.assunto_ids ? t.assunto_ids.split(',').filter(Boolean).map(Number) : [];
+      const tAssuntos = tIds.length > 0
+        ? db.prepare(`SELECT id,nome,codigo,parent_id,ordem FROM assuntos WHERE id IN (${tIds.map(()=>'?').join(',')}) ORDER BY ordem,codigo`).all(...tIds)
+        : [];
+      return { ...t, assuntos: tAssuntos };
+    });
+    return { ...d, assuntos, tarefas };
   });
   res.json({...p,disciplinas});
 });
@@ -543,8 +733,8 @@ app.post('/api/planejamentos/:id/disciplinas', requireAuth, (req, res) => {
   res.json({ok:true});
 });
 app.put('/api/plan-disciplinas/:id', requireAuth, (req, res) => {
-  const { prova, peso, num_questoes } = req.body;
-  db.prepare('UPDATE plan_disciplinas SET prova=?,peso=?,num_questoes=? WHERE id=?').run(prova||'',peso||1,num_questoes||0,req.params.id);
+  const { prova, peso, num_questoes, meta_questoes=null, meta_pct=null, banca='' } = req.body;
+  db.prepare('UPDATE plan_disciplinas SET prova=?,peso=?,num_questoes=?,meta_questoes=?,meta_pct=?,banca=? WHERE id=?').run(prova||'',peso||1,num_questoes||0,meta_questoes,meta_pct,banca,req.params.id);
   res.json({ok:true});
 });
 app.delete('/api/plan-disciplinas/:id', requireAuth, (req, res) => {
@@ -557,11 +747,22 @@ app.post('/api/plan-disciplinas/:id/assuntos', requireAuth, (req, res) => {
   res.json({ok:true});
 });
 app.post('/api/plan-disciplinas/:id/tarefas', requireAuth, (req, res) => {
-  const { assunto_ids=[], fonte='', link_caderno='', o_que_fazer='', data_execucao='', tipo='' } = req.body;
+  const {
+    assunto_ids=[], fonte='', link_caderno='', o_que_fazer='', data_execucao='', tipo='',
+    tempo_estimado=60, quantidade_questoes=0, comando='', hiperdica='', observacao=''
+  } = req.body;
   const maxOrdem = db.prepare('SELECT MAX(ordem) as m FROM plan_tarefas WHERE plan_disciplina_id=?').get(req.params.id);
   const ordem = (maxOrdem.m || 0) + 1;
-  const info=db.prepare('INSERT INTO plan_tarefas (plan_disciplina_id,assunto_ids,fonte,link_caderno,o_que_fazer,data_execucao,ordem,tipo) VALUES (?,?,?,?,?,?,?,?)').run(req.params.id,assunto_ids.join(','),fonte,link_caderno,o_que_fazer,data_execucao,ordem,tipo);
-  res.json({id:info.lastInsertRowid});
+  const maxNum = db.prepare('SELECT MAX(numero) as m FROM plan_tarefas WHERE plan_disciplina_id=?').get(req.params.id);
+  const numero = (maxNum.m || 0) + 1;
+  const info = db.prepare(`
+    INSERT INTO plan_tarefas
+      (plan_disciplina_id,assunto_ids,fonte,link_caderno,o_que_fazer,data_execucao,ordem,tipo,
+       tempo_estimado,quantidade_questoes,comando,hiperdica,numero,observacao)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(req.params.id, assunto_ids.join(','), fonte, link_caderno, o_que_fazer||comando, data_execucao, ordem, tipo,
+         tempo_estimado, quantidade_questoes, comando, hiperdica, numero, observacao);
+  res.json({ id: info.lastInsertRowid, numero });
 });
 app.put('/api/plan-tarefas/reordenar', requireAuth, (req, res) => {
   const { itens } = req.body; // [{id, ordem}]
@@ -570,20 +771,33 @@ app.put('/api/plan-tarefas/reordenar', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 app.put('/api/plan-tarefas/:id', requireAuth, (req, res) => {
-  const t=db.prepare('SELECT * FROM plan_tarefas WHERE id=?').get(req.params.id);
-  if(!t) return res.status(404).json({error:'Não encontrado'});
-  const { assunto_ids, fonte, link_caderno, o_que_fazer, data_execucao, concluida, tipo } = req.body;
-  db.prepare('UPDATE plan_tarefas SET assunto_ids=?,fonte=?,link_caderno=?,o_que_fazer=?,data_execucao=?,concluida=?,tipo=? WHERE id=?').run(
-    assunto_ids!==undefined?assunto_ids.join(','):t.assunto_ids,
-    fonte!==undefined?fonte:t.fonte,
-    link_caderno!==undefined?link_caderno:t.link_caderno,
-    o_que_fazer!==undefined?o_que_fazer:t.o_que_fazer,
-    data_execucao!==undefined?data_execucao:t.data_execucao,
-    concluida!==undefined?(concluida?1:0):t.concluida,
-    tipo!==undefined?tipo:(t.tipo||''),
+  const t = db.prepare('SELECT * FROM plan_tarefas WHERE id=?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Não encontrado' });
+  const {
+    assunto_ids, fonte, link_caderno, o_que_fazer, data_execucao, concluida, tipo,
+    tempo_estimado, quantidade_questoes, comando, hiperdica, observacao
+  } = req.body;
+  db.prepare(`
+    UPDATE plan_tarefas SET
+      assunto_ids=?,fonte=?,link_caderno=?,o_que_fazer=?,data_execucao=?,concluida=?,tipo=?,
+      tempo_estimado=?,quantidade_questoes=?,comando=?,hiperdica=?,observacao=?
+    WHERE id=?
+  `).run(
+    assunto_ids !== undefined ? assunto_ids.join(',') : t.assunto_ids,
+    fonte !== undefined ? fonte : t.fonte,
+    link_caderno !== undefined ? link_caderno : t.link_caderno,
+    o_que_fazer !== undefined ? o_que_fazer : t.o_que_fazer,
+    data_execucao !== undefined ? data_execucao : t.data_execucao,
+    concluida !== undefined ? (concluida ? 1 : 0) : t.concluida,
+    tipo !== undefined ? tipo : (t.tipo || ''),
+    tempo_estimado !== undefined ? tempo_estimado : (t.tempo_estimado || 60),
+    quantidade_questoes !== undefined ? quantidade_questoes : (t.quantidade_questoes || 0),
+    comando !== undefined ? comando : (t.comando || ''),
+    hiperdica !== undefined ? hiperdica : (t.hiperdica || ''),
+    observacao !== undefined ? observacao : (t.observacao || ''),
     req.params.id
   );
-  res.json({ok:true});
+  res.json({ ok: true });
 });
 app.delete('/api/plan-tarefas/:id', requireAuth, (req, res) => {
   db.prepare('DELETE FROM plan_tarefas WHERE id=?').run(req.params.id);
@@ -708,6 +922,38 @@ app.get('/api/stats/dashboard-plan', requireAuth, (req, res) => {
   const sA=db.prepare("SELECT SUM(total_questoes) as q,SUM(acertos) as a FROM sessoes WHERE user_id=? AND tipo IN ('questoes','simulado') AND data>=?").get(uid,fmt(isSA));
 
   res.json({ total_questoes:overall.total_questoes||0, total_acertos:overall.total_acertos||0, pct_acerto_geral, disciplinas_na_meta:disciplinas.filter(d=>d.na_meta).length, total_disciplinas:disciplinas.length, pct_avanco_edital, disciplinas, semana_atual:{questoes:sA.q||0,acertos:sA.a||0} });
+});
+
+// ── ATIVIDADE: SEQUÊNCIA E ÚLTIMOS 30 DIAS ────────────────────────────────────
+app.get('/api/stats/atividade', requireAuth, (req, res) => {
+  const uid = req.user.id;
+  const hoje = getBrasiliaISO();
+
+  // Últimos 30 dias com contagem de questões por dia
+  const rows = db.prepare(`
+    SELECT data, SUM(COALESCE(questoes_feitas, total_questoes, 0)) as questoes,
+           COUNT(*) as sessoes
+    FROM sessoes WHERE user_id=? AND data >= date(?, '-30 days')
+    GROUP BY data ORDER BY data ASC
+  `).all(uid, hoje);
+
+  // Sequência atual (streak): dias consecutivos com sessão até hoje
+  const diasComSessao = new Set(
+    db.prepare('SELECT DISTINCT data FROM sessoes WHERE user_id=? ORDER BY data DESC').all(uid).map(r => r.data)
+  );
+  let streak = 0;
+  const cur = new Date(hoje + 'T00:00:00');
+  while (true) {
+    const iso = cur.toISOString().slice(0, 10);
+    if (diasComSessao.has(iso)) {
+      streak++;
+      cur.setDate(cur.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  res.json({ dias: rows, streak });
 });
 
 // Stats disciplina por planejamento

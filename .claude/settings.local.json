@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \":*)",
+      "Bash(node -e \"const JSZip = require\\(''''jszip''''\\);\")",
+      "Bash(node --check \"C:/Users/melor/OneDrive/Desktop/Hiperfoco/backend/server.js\")",
+      "Bash(node --check \"C:/Users/melor/OneDrive/Desktop/Hiperfoco/backend/db.js\")",
+      "Bash(node --check \"C:/Users/melor/OneDrive/Desktop/Hiperfoco/frontend/js/components.js\")",
+      "Bash(node --check \"C:/Users/melor/OneDrive/Desktop/Hiperfoco/frontend/js/utils.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\pages\\\\planejamento.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\pages\\\\disciplinas.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\components.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\pages\\\\ciclo.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\pages\\\\dashboard.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\backend\\\\server.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\pages\\\\historico.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\pages\\\\configuracoes.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\app.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\backend\\\\seed.js\")",
+      "Bash(for f:*)",
+      "Bash(do node:*)",
+      "Bash(node --check backend/server.js)",
+      "Bash(node --check backend/seed.js)",
+      "Bash(node --check frontend/js/pages/ciclo.js)",
+      "Bash(node --check frontend/js/pages/dashboard.js)",
+      "Bash(node --check frontend/js/pages/historico.js)",
+      "Bash(node --check backend/db.js)",
+      "Bash(node --check frontend/js/app.js)",
+      "Bash(node --check frontend/js/components.js)",
+      "Bash(node --check frontend/js/utils.js)",
+      "Bash(node --check frontend/js/pages/disciplinas.js)"
+    ]
+  }
+}

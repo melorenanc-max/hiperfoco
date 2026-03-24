@@ -218,11 +218,74 @@ const migrations = [
   `ALTER TABLE assuntos ADD COLUMN ordem INTEGER DEFAULT 0`,
   `ALTER TABLE plan_tarefas ADD COLUMN ordem INTEGER DEFAULT 0`,
   `ALTER TABLE plan_tarefas ADD COLUMN tipo TEXT DEFAULT ''`,
+
+  // Fase 1 — Redesign 2026
+  // disciplinas
+  `ALTER TABLE disciplinas ADD COLUMN nivel_conhecimento INTEGER DEFAULT NULL`,
+
+  // plan_disciplinas
+  `ALTER TABLE plan_disciplinas ADD COLUMN meta_questoes INTEGER DEFAULT NULL`,
+  `ALTER TABLE plan_disciplinas ADD COLUMN meta_pct REAL DEFAULT NULL`,
+  `ALTER TABLE plan_disciplinas ADD COLUMN banca TEXT DEFAULT ''`,
+
+  // sessoes
+  `ALTER TABLE sessoes ADD COLUMN questoes_feitas INTEGER DEFAULT 0`,
+  `ALTER TABLE sessoes ADD COLUMN questoes_acertadas INTEGER DEFAULT 0`,
+  `ALTER TABLE sessoes ADD COLUMN tempo_gasto INTEGER DEFAULT NULL`,
+  `ALTER TABLE sessoes ADD COLUMN como_foi TEXT DEFAULT ''`,
+
+  // ciclo_config
+  `ALTER TABLE ciclo_config ADD COLUMN horas_semana REAL DEFAULT NULL`,
+  `ALTER TABLE ciclo_config ADD COLUMN dias_estudo TEXT DEFAULT '[]'`,
+  `ALTER TABLE ciclo_config ADD COLUMN inicio_semana TEXT DEFAULT 'segunda'`,
+  `ALTER TABLE ciclo_config ADD COLUMN duracao_ciclo INTEGER DEFAULT 7`,
+
+  // plan_tarefas
+  `ALTER TABLE plan_tarefas ADD COLUMN tempo_estimado INTEGER DEFAULT 60`,
+  `ALTER TABLE plan_tarefas ADD COLUMN quantidade_questoes INTEGER DEFAULT 0`,
+  `ALTER TABLE plan_tarefas ADD COLUMN link_caderno TEXT DEFAULT ''`,
+  `ALTER TABLE plan_tarefas ADD COLUMN comando TEXT DEFAULT ''`,
+  `ALTER TABLE plan_tarefas ADD COLUMN hiperdica TEXT DEFAULT ''`,
+  `ALTER TABLE plan_tarefas ADD COLUMN numero INTEGER DEFAULT 0`,
+  `ALTER TABLE plan_tarefas ADD COLUMN observacao TEXT DEFAULT ''`,
+
+  // ciclo_itens
+  `ALTER TABLE ciclo_itens ADD COLUMN quantidade_questoes INTEGER DEFAULT 0`,
+  `ALTER TABLE ciclo_itens ADD COLUMN link_caderno TEXT DEFAULT ''`,
+  `ALTER TABLE ciclo_itens ADD COLUMN comando TEXT DEFAULT ''`,
+  `ALTER TABLE ciclo_itens ADD COLUMN hiperdica TEXT DEFAULT ''`,
+  `ALTER TABLE ciclo_itens ADD COLUMN numero INTEGER DEFAULT 0`,
+  `ALTER TABLE ciclo_itens ADD COLUMN plan_tarefa_id INTEGER DEFAULT NULL`,
 ];
 
 for (const m of migrations) {
   try { db.exec(m); } catch(e) { /* já existe */ }
 }
+
+// Novas tabelas — Redesign 2026
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bancas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    nome TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+    UNIQUE(user_id, nome)
+  );
+
+  CREATE TABLE IF NOT EXISTS ciclo_viradas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    data_virada TEXT NOT NULL,
+    tarefas_concluidas INTEGER DEFAULT 0,
+    tarefas_nao_concluidas INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (user_id) REFERENCES usuarios(id) ON DELETE CASCADE
+  );
+`);
+
+// Bancas default (inseridas para cada usuário existente na primeira vez)
+// A inserção por usuário é feita no endpoint de login/me.
+// Aqui garantimos a tabela existe apenas.
 
 // Apaga todos os dados de teste (reset limpo para novo usuário)
 try {
@@ -234,6 +297,7 @@ try {
       DELETE FROM plan_disciplinas;
       DELETE FROM planejamentos;
       DELETE FROM ciclo_itens;
+      DELETE FROM ciclo_viradas;
       DELETE FROM ciclo_config;
       DELETE FROM sessao_assuntos;
       DELETE FROM sessoes;
@@ -242,6 +306,7 @@ try {
       DELETE FROM concursos;
       DELETE FROM assuntos;
       DELETE FROM disciplinas;
+      DELETE FROM bancas;
       DELETE FROM app_config;
       DELETE FROM usuarios;
     `);

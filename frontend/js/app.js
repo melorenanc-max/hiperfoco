@@ -3,7 +3,6 @@
 (function () {
   const routes = {
     'dashboard': renderDashboard,
-    'registro': renderRegistro,
     'ciclo': renderCiclo,
     'disciplinas': renderDisciplinas,
     'disciplina-detalhe': renderDisciplinaDetalhe,
@@ -11,7 +10,7 @@
     'planejamento-detalhe': renderPlanejamentoDetalhe,
     'planejamento-disciplina': renderPlanejamentoDisciplina,
     'historico': renderHistorico,
-    'estatisticas': renderEstatisticas,
+    'estatisticas': renderHistorico, // merged into historico
     'configuracoes': renderConfiguracoes,
   };
 

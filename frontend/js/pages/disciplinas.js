@@ -3,7 +3,7 @@
 async function renderDisciplinas(container) {
   container.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Disciplinas</div><div class="page-subtitle">Clique numa disciplina para ver detalhes</div></div>
+      <div><div class="page-title">Disciplinas</div><div class="page-subtitle">Gerencie suas disciplinas e assuntos</div></div>
       <button class="btn btn-primary" id="nova-disc-btn">+ Nova Disciplina</button>
     </div>
     <div id="disciplinas-list"></div>
@@ -18,42 +18,82 @@ async function renderDisciplinas(container) {
     try {
       const url = planId ? `/api/stats/dashboard-plan?plan_id=${planId}` : '/api/stats/dashboard-plan';
       const s = await api.get(url);
-      s.disciplinas.forEach(d => { statsMap[d.id] = d; });
+      (s.disciplinas || []).forEach(d => { statsMap[d.id] = d; });
     } catch(e) {}
 
     listEl.innerHTML = '';
     disciplinas.forEach(d => {
       const s = statsMap[d.id] || {};
+      const pct = s.pct_acerto ? parseFloat(s.pct_acerto) : null;
       const item = document.createElement('div');
-      item.className = 'accordion-item';
+      item.className = 'accordion-item disc-accordion-item';
       item.dataset.id = d.id;
 
-      // Header: só nome e badge de acerto. Sem botões aqui.
+      // ── Header
       const header = document.createElement('div');
-      header.className = 'accordion-header';
-      header.innerHTML = `
-        <span class="accordion-arrow">▶</span>
-        <span class="disc-acc-nome">${d.nome}</span>
-        <div class="disc-acc-badges">
-          ${acertoBadge(s.pct_acerto)}
-          <span class="text-small text-muted">Avanço: ${s.pct_avanco ? s.pct_avanco + '%' : '—'}</span>
-        </div>
-      `;
+      header.className = 'accordion-header disc-acc-header';
+
+      const chevron = document.createElement('span');
+      chevron.className = 'accordion-arrow';
+      chevron.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+      const nome = document.createElement('span');
+      nome.className = 'disc-acc-nome';
+      nome.textContent = d.nome;
+
+      const badges = document.createElement('div');
+      badges.className = 'disc-acc-badges';
+
+      if (pct !== null) {
+        const b = document.createElement('span');
+        b.className = `acerto-badge ${acertoClass(pct)}`;
+        b.textContent = `${pct.toFixed(1)}%`;
+        badges.appendChild(b);
+      }
+      if (s.total_questoes) {
+        const q = document.createElement('span');
+        q.className = 'text-small text-muted';
+        q.textContent = `${(s.total_questoes||0)} questões`;
+        badges.appendChild(q);
+      }
+
+      const headerActions = document.createElement('div');
+      headerActions.className = 'disc-header-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn-action btn-action-edit';
+      editBtn.title = 'Editar disciplina';
+      editBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+      editBtn.addEventListener('click', e => { e.stopPropagation(); openDiscModal(d.id, load); });
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-action btn-action-delete';
+      delBtn.title = 'Apagar disciplina';
+      delBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>`;
+      delBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (!confirm(`Apagar a disciplina "${d.nome}"?`)) return;
+        await api.delete(`/api/disciplinas/${d.id}`);
+        showToast('Disciplina apagada'); load();
+      });
+
+      headerActions.append(editBtn, delBtn);
+      header.append(chevron, nome, badges, headerActions);
 
       const body = document.createElement('div');
       body.className = 'accordion-body';
       body.id = `disc-body-${d.id}`;
 
-      item.appendChild(header);
-      item.appendChild(body);
+      item.append(header, body);
       listEl.appendChild(item);
 
-      // Toggle accordion — listener simples, sem botões para interferir
-      header.addEventListener('click', () => {
+      header.addEventListener('click', e => {
+        if (e.target.closest('button')) return;
         const isOpen = item.classList.toggle('open');
+        chevron.style.transform = isOpen ? 'rotate(90deg)' : '';
         if (isOpen && !item.dataset.loaded) {
           item.dataset.loaded = '1';
-          loadDiscBody(d.id, item, load);
+          loadDiscBody(d.id, d, item);
         }
       });
     });
@@ -64,363 +104,396 @@ async function renderDisciplinas(container) {
 }
 
 // ── CORPO DA DISCIPLINA ───────────────────────────────────────────────────────
-async function loadDiscBody(discId, item, onReload) {
+async function loadDiscBody(discId, discBasic, item) {
   const body = qs(`#disc-body-${discId}`, item);
-  body.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3);font-size:0.84rem">Carregando...</div>`;
+  body.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-3)">Carregando...</div>`;
 
-  const [discs, stats] = await Promise.all([
+  const [discs, assuntos] = await Promise.all([
     api.get('/api/disciplinas'),
-    api.get(`/api/stats/disciplina/${discId}`)
+    api.get(`/api/assuntos?disciplina_id=${discId}`)
   ]);
-  const disc = discs.find(d => d.id == discId);
-  if (!disc) return;
+  const disc = discs.find(d => d.id == discId) || discBasic;
 
   const reload = () => {
     item.dataset.loaded = '';
-    loadDiscBody(discId, item, onReload);
+    loadDiscBody(discId, disc, item);
   };
 
-  // Barra de ações da disciplina — fora do header, dentro do body
-  const acoesBarra = document.createElement('div');
-  acoesBarra.className = 'disc-acoes-barra';
-  acoesBarra.innerHTML = `<span style="font-size:0.78rem;color:var(--text-3)">Disciplina:</span>`;
-
-  const editarBtn = document.createElement('button');
-  editarBtn.className = 'btn-action btn-action-edit';
-  editarBtn.title = 'Editar disciplina';
-  editarBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-  editarBtn.addEventListener('click', () => openDiscModal(discId, onReload));
-
-  const apagarBtn = document.createElement('button');
-  apagarBtn.className = 'btn-action btn-action-delete';
-  apagarBtn.title = 'Apagar disciplina';
-  apagarBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
-  apagarBtn.addEventListener('click', async () => {
-    if (!confirm(`Apagar a disciplina "${disc.nome}"?`)) return;
-    await api.delete(`/api/disciplinas/${discId}`);
-    showToast('Disciplina apagada');
-    item.classList.remove('open');
-    item.dataset.loaded = '';
-    onReload();
-  });
-
-  acoesBarra.appendChild(editarBtn);
-  acoesBarra.appendChild(apagarBtn);
-
-  // Conteúdo do body
-  const conteudo = document.createElement('div');
-  conteudo.innerHTML = `
-    <div class="disc-detail-grid">
-      <div class="disc-info-card">
-        <div class="disc-info-title">Estratégia</div>
-        <div class="disc-info-content">${disc.estrategia || '<span style="color:var(--text-3)">Não definida</span>'}</div>
-      </div>
-      <div>
-        <div class="disc-info-card" style="margin-bottom:10px">
-          <div class="disc-info-title">Material de Teoria</div>
-          <div class="disc-info-content">
-            ${disc.teoria_material ? `${disc.teoria_material}${disc.teoria_link ? ` — <a href="${disc.teoria_link}" target="_blank">📎 link</a>` : ''}` : '<span style="color:var(--text-3)">Não definido</span>'}
-          </div>
-        </div>
-        <div class="disc-info-card">
-          <div class="disc-info-title">Material de Resumo</div>
-          <div class="disc-info-content">
-            ${disc.resumo_tipo ? `<strong>${disc.resumo_tipo}</strong>` : ''}
-            ${disc.resumo_descricao ? `<br>${disc.resumo_descricao}` : ''}
-            ${disc.resumo_link ? `<br><a href="${disc.resumo_link}" target="_blank">📎 link</a>` : ''}
-            ${!disc.resumo_tipo && !disc.resumo_descricao ? '<span style="color:var(--text-3)">Não definido</span>' : ''}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div style="padding:0 20px">
-      <div class="metrics-grid" style="margin-bottom:16px">
-        <div class="metric-card"><div class="metric-label">% Acerto</div><div class="metric-value">${stats.pct_acerto ? stats.pct_acerto + '%' : '—'}</div></div>
-        <div class="metric-card"><div class="metric-label">Questões</div><div class="metric-value">${(stats.total_questoes||0).toLocaleString('pt-BR')}</div></div>
-        <div class="metric-card"><div class="metric-label">Avanço</div><div class="metric-value">${stats.pct_avanco ? stats.pct_avanco + '%' : '—'}</div></div>
-        <div class="metric-card"><div class="metric-label">Assuntos na Meta</div><div class="metric-value">${stats.assuntos_na_meta}/${stats.assuntos.length}</div></div>
-      </div>
-    </div>
-
-    <div style="padding:0 20px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-        <div class="section-title" style="margin:0">Assuntos</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="assuntos-toolbar-${discId}"></div>
-      </div>
-      <div id="assuntos-tree-${discId}" class="assunto-tree"></div>
-    </div>
-  `;
-
   body.innerHTML = '';
-  body.appendChild(acoesBarra);
-  body.appendChild(conteudo);
 
-  // Toolbar de assuntos — botões via createElement
-  const toolbar = qs(`#assuntos-toolbar-${discId}`, body);
+  // ── Grid de cards de informação
+  const grid = document.createElement('div');
+  grid.className = 'disc-info-grid';
+  grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px 20px;';
 
-  const expandirBtn = document.createElement('button');
-  expandirBtn.className = 'btn btn-outline btn-sm';
-  expandirBtn.textContent = '↕ Expandir tudo';
-  expandirBtn.addEventListener('click', () => {
-    qsa('.assunto-children', body).forEach(el => el.classList.remove('hidden'));
-    qsa('.assunto-tree-toggle', body).forEach(el => { if (el.textContent === '▶') el.textContent = '▼'; });
-  });
+  // Card Estratégia (ocupa linha 1 e 2 da coluna esquerda)
+  grid.appendChild(makeInfoCard('Estratégia', disc.estrategia, 'estrategia', 'textarea', discId, reload));
 
-  const retrairBtn = document.createElement('button');
-  retrairBtn.className = 'btn btn-outline btn-sm';
-  retrairBtn.textContent = '↕ Retrair tudo';
-  retrairBtn.addEventListener('click', () => {
-    qsa('.assunto-children', body).forEach(el => el.classList.add('hidden'));
-    qsa('.assunto-tree-toggle', body).forEach(el => { if (el.textContent === '▼') el.textContent = '▶'; });
-  });
+  // Coluna direita: teoria + resumo
+  const rightCol = document.createElement('div');
+  rightCol.style.cssText = 'display:flex;flex-direction:column;gap:12px;';
+  rightCol.appendChild(makeInfoCard('Material de Teoria', disc.teoria_material, 'teoria_material', 'text', discId, reload));
+  rightCol.appendChild(makeInfoCard('Material de Resumo', disc.resumo_descricao || disc.resumo_tipo, 'resumo_descricao', 'text', discId, reload));
+  grid.appendChild(rightCol);
 
-  const importarBtn = document.createElement('button');
-  importarBtn.className = 'btn btn-outline btn-sm';
-  importarBtn.textContent = '⬆ Importar';
-  importarBtn.addEventListener('click', () => openImportarModal(discId, reload));
+  body.appendChild(grid);
 
-  const novoAssuntoBtn = document.createElement('button');
-  novoAssuntoBtn.className = 'btn btn-primary btn-sm';
-  novoAssuntoBtn.textContent = '+ Novo Assunto';
-  novoAssuntoBtn.addEventListener('click', () => openAssuntoModal(null, '', discId, null, reload));
+  // ── Seção Assuntos
+  const assuntosSection = document.createElement('div');
+  assuntosSection.style.cssText = 'padding:0 20px 20px;border-top:1px solid var(--border);padding-top:16px;';
 
-  toolbar.appendChild(expandirBtn);
-  toolbar.appendChild(retrairBtn);
-  toolbar.appendChild(importarBtn);
-  toolbar.appendChild(novoAssuntoBtn);
+  const assuntosHeader = document.createElement('div');
+  assuntosHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;';
 
-  await renderAssuntosTree(discId, stats, body, reload);
-}
+  const assuntosTitle = document.createElement('div');
+  assuntosTitle.className = 'section-title';
+  assuntosTitle.style.margin = '0';
+  assuntosTitle.textContent = 'Assuntos';
 
-// ── ÁRVORE DE ASSUNTOS ────────────────────────────────────────────────────────
-async function renderAssuntosTree(discId, stats, body, reload) {
-  const treeEl = qs(`#assuntos-tree-${discId}`, body);
-  if (!treeEl) return;
+  const editAssuntosBtn = document.createElement('button');
+  editAssuntosBtn.className = 'btn btn-outline btn-sm';
+  editAssuntosBtn.textContent = 'Editar assuntos';
+  editAssuntosBtn.addEventListener('click', () => openEditarAssuntosModal(discId, assuntos, reload));
 
-  const assuntos = await api.get(`/api/assuntos?disciplina_id=${discId}`);
-  if (!assuntos.length) { treeEl.innerHTML = renderEmptyState('▸', 'Nenhum assunto cadastrado.'); return; }
+  assuntosHeader.append(assuntosTitle, editAssuntosBtn);
+  assuntosSection.appendChild(assuntosHeader);
 
-  const raizes = assuntos.filter(a => !a.parent_id).sort((a, b) => (a.ordem||0) - (b.ordem||0));
-  const filhosMap = {};
-  assuntos.forEach(a => {
-    if (a.parent_id) {
-      if (!filhosMap[a.parent_id]) filhosMap[a.parent_id] = [];
-      filhosMap[a.parent_id].push(a);
-    }
-  });
-  Object.values(filhosMap).forEach(arr => arr.sort((a, b) => (a.ordem||0) - (b.ordem||0)));
-
-  const statsMap = {};
-  (stats.assuntos || []).forEach(a => {
-    statsMap[a.id] = a;
-    (a.filhos || []).forEach(f => { statsMap[f.id] = f; });
-  });
-
-  treeEl.innerHTML = '';
-  let contador = {};
-
-  function criarNodeEl(a, nivel) {
-    const filhos = filhosMap[a.id] || [];
-    const hasFilhos = filhos.length > 0;
-    const pct = statsMap[a.id]?.pct_acerto;
-    const grupoKey = a.parent_id || 'root';
-    contador[grupoKey] = (contador[grupoKey] || 0) + 1;
-    const num = String(contador[grupoKey]).padStart(2, '0');
-
-    const itemEl = document.createElement('div');
-    itemEl.className = 'assunto-tree-item';
-    itemEl.dataset.id = a.id;
-    itemEl.dataset.parent = a.parent_id || '';
-    itemEl.draggable = true;
-    if (nivel > 0) itemEl.style.paddingLeft = (nivel * 20) + 'px';
-
-    // Header (toggle)
-    const headerEl = document.createElement('div');
-    headerEl.className = 'assunto-tree-header';
-
-    const dragHandle = document.createElement('span');
-    dragHandle.className = 'drag-handle';
-    dragHandle.title = 'Arrastar';
-    dragHandle.textContent = '⠿';
-
-    const toggle = document.createElement('span');
-    toggle.className = 'assunto-tree-toggle';
-    toggle.textContent = hasFilhos ? '▶' : '·';
-
-    const numSpan = document.createElement('span');
-    numSpan.className = 'assunto-num';
-    numSpan.textContent = num;
-
-    const nomeSpan = document.createElement('span');
-    nomeSpan.className = 'assunto-tree-nome';
-    nomeSpan.textContent = a.nome;
-
-    const badgeSpan = document.createElement('span');
-    badgeSpan.innerHTML = acertoBadge(pct);
-
-    headerEl.appendChild(dragHandle);
-    headerEl.appendChild(toggle);
-    headerEl.appendChild(numSpan);
-    headerEl.appendChild(nomeSpan);
-    headerEl.appendChild(badgeSpan);
-
-    // Botões de ação — criados com createElement e addEventListener direto
-    const editBtn = document.createElement('button');
-    editBtn.className = 'btn-action btn-action-edit';
-    editBtn.title = 'Editar assunto';
-    editBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-    editBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openAssuntoModal(a.id, a.nome, discId, a.parent_id || null, reload);
-    });
-
-    const addSubBtn = document.createElement('button');
-    addSubBtn.className = 'btn btn-outline btn-sm';
-    addSubBtn.style.fontSize = '0.7rem';
-    addSubBtn.style.padding = '2px 6px';
-    addSubBtn.title = 'Adicionar subassunto';
-    addSubBtn.textContent = '+sub';
-    addSubBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openAssuntoModal(null, '', discId, a.id, reload);
-    });
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn-action btn-action-delete';
-    delBtn.title = 'Apagar assunto';
-    delBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
-    delBtn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!confirm('Apagar este assunto e seus subassuntos?')) return;
-      await api.delete(`/api/assuntos/${a.id}`);
-      showToast('Assunto apagado');
-      reload();
-    });
-
-    headerEl.appendChild(editBtn);
-    headerEl.appendChild(addSubBtn);
-    headerEl.appendChild(delBtn);
-
-    // Toggle só no header (não nos botões — stopPropagation nos botões resolve)
-    headerEl.addEventListener('click', () => {
-      if (!hasFilhos) return;
-      const filhosEl = qs(`#filhos-${a.id}`, itemEl);
-      if (!filhosEl) return;
-      filhosEl.classList.toggle('hidden');
-      toggle.textContent = filhosEl.classList.contains('hidden') ? '▶' : '▼';
-    });
-
-    itemEl.appendChild(headerEl);
-
-    // Filhos
-    if (hasFilhos) {
-      const filhosContainer = document.createElement('div');
-      filhosContainer.className = 'assunto-children hidden';
-      filhosContainer.id = `filhos-${a.id}`;
-      filhos.forEach(f => filhosContainer.appendChild(criarNodeEl(f, nivel + 1)));
-      itemEl.appendChild(filhosContainer);
-    }
-
-    return itemEl;
+  if (assuntos.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'text-muted text-small';
+    empty.textContent = 'Nenhum assunto cadastrado. Clique em "Editar assuntos" para adicionar.';
+    assuntosSection.appendChild(empty);
+  } else {
+    assuntosSection.appendChild(buildAssuntoAccordion(assuntos));
   }
 
-  raizes.forEach(a => treeEl.appendChild(criarNodeEl(a, 0)));
-
-  // Drag & drop
-  let dragId = null;
-  qsa('.assunto-tree-item', treeEl).forEach(el => {
-    el.addEventListener('dragstart', e => {
-      dragId = el.dataset.id;
-      e.dataTransfer.effectAllowed = 'move';
-      setTimeout(() => el.classList.add('dragging'), 0);
-    });
-    el.addEventListener('dragend', () => {
-      el.classList.remove('dragging');
-      qsa('.drag-over', treeEl).forEach(x => x.classList.remove('drag-over'));
-    });
-    el.addEventListener('dragover', e => {
-      e.preventDefault();
-      if (el.dataset.id === dragId) return;
-      qsa('.drag-over', treeEl).forEach(x => x.classList.remove('drag-over'));
-      el.classList.add('drag-over');
-    });
-    el.addEventListener('drop', async e => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (!dragId || el.dataset.id === dragId) return;
-      el.classList.remove('drag-over');
-      const dragEl = qs(`[data-id="${dragId}"]`, treeEl);
-      el.parentNode.insertBefore(dragEl, el);
-      const itensMesmoNivel = [...el.parentNode.querySelectorAll(':scope > .assunto-tree-item')];
-      const payload = itensMesmoNivel.map((it, idx) => ({
-        id: parseInt(it.dataset.id),
-        ordem: idx + 1,
-        parent_id: it.dataset.parent ? parseInt(it.dataset.parent) : null
-      }));
-      await api.put('/api/assuntos/reordenar', { itens: payload });
-      reload();
-    });
-  });
+  body.appendChild(assuntosSection);
 }
 
-// ── MODAIS ────────────────────────────────────────────────────────────────────
+function makeInfoCard(titulo, valor, campo, tipo, discId, reload) {
+  const card = document.createElement('div');
+  card.className = 'disc-info-card';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'disc-info-card-title';
+
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = titulo;
+
+  const editIcon = document.createElement('button');
+  editIcon.className = 'disc-info-edit-btn';
+  editIcon.title = 'Editar';
+  editIcon.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+
+  titleRow.append(titleSpan, editIcon);
+
+  const display = document.createElement('div');
+  display.className = 'disc-info-content';
+  display.textContent = valor || '';
+  if (!valor) { display.style.color = 'var(--text-3)'; display.textContent = 'Não definido'; }
+
+  const editForm = document.createElement('div');
+  editForm.className = 'disc-info-edit-form hidden';
+
+  const input = tipo === 'textarea'
+    ? Object.assign(document.createElement('textarea'), { rows: 4, value: valor || '' })
+    : Object.assign(document.createElement('input'), { type: 'text', value: valor || '' });
+  input.className = 'form-control';
+  input.style.cssText = 'width:100%;margin-bottom:8px;';
+
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:6px;';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary btn-sm';
+  saveBtn.textContent = 'Salvar';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-outline btn-sm';
+  cancelBtn.textContent = 'Cancelar';
+
+  btnRow.append(saveBtn, cancelBtn);
+  editForm.append(input, btnRow);
+  card.append(titleRow, display, editForm);
+
+  editIcon.addEventListener('click', () => {
+    display.classList.add('hidden');
+    editForm.classList.remove('hidden');
+    input.focus();
+  });
+  cancelBtn.addEventListener('click', () => {
+    display.classList.remove('hidden');
+    editForm.classList.add('hidden');
+    input.value = valor || '';
+  });
+  saveBtn.addEventListener('click', async () => {
+    const payload = { [campo]: input.value.trim() };
+    await api.put(`/api/disciplinas/${discId}`, { ...payload });
+    showToast('Salvo!', 'success');
+    reload();
+  });
+
+  return card;
+}
+
+// ── MODAL EDITAR ASSUNTOS ─────────────────────────────────────────────────────
+function openEditarAssuntosModal(discId, assuntosIniciais, onSave) {
+  // Estado local editável
+  let assuntos = assuntosIniciais.map(a => ({ ...a, id: a.id }));
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:500;display:flex;align-items:center;justify-content:center;';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.style.cssText = 'width:520px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;background:var(--bg-card);border-radius:var(--radius-lg);overflow:hidden;';
+
+  const mHeader = document.createElement('div');
+  mHeader.className = 'modal-header';
+  mHeader.style.cssText = 'padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;';
+  mHeader.innerHTML = `<h3 style="font-size:1rem;font-weight:700">Editar Assuntos</h3>`;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'btn-icon';
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', () => document.body.removeChild(overlay));
+  mHeader.appendChild(closeBtn);
+
+  const mBody = document.createElement('div');
+  mBody.style.cssText = 'flex:1;overflow-y:auto;padding:16px 20px;';
+
+  const nota = document.createElement('p');
+  nota.style.cssText = 'font-size:0.78rem;color:var(--text-3);margin-bottom:12px;';
+  nota.textContent = 'Arraste para reordenar. Passe o mouse para ver opções.';
+  mBody.appendChild(nota);
+
+  const lista = document.createElement('div');
+  lista.id = 'edit-assuntos-lista';
+  mBody.appendChild(lista);
+
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-outline btn-sm';
+  addBtn.style.cssText = 'margin-top:12px;width:100%;';
+  addBtn.textContent = '+ Adicionar assunto';
+  addBtn.addEventListener('click', () => {
+    const novoId = -(Date.now());
+    assuntos.push({ id: novoId, nome: '', parent_id: null, ordem: assuntos.filter(a=>!a.parent_id).length + 1 });
+    renderLista();
+  });
+  mBody.appendChild(addBtn);
+
+  const mFooter = document.createElement('div');
+  mFooter.style.cssText = 'padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;';
+  mFooter.innerHTML = `<span style="font-size:0.75rem;color:var(--text-3)">Ordem salva ao clicar em Salvar</span>`;
+
+  const footerBtns = document.createElement('div');
+  footerBtns.style.cssText = 'display:flex;gap:8px;';
+
+  const cancelarBtn = document.createElement('button');
+  cancelarBtn.className = 'btn btn-outline';
+  cancelarBtn.textContent = 'Cancelar';
+  cancelarBtn.addEventListener('click', () => document.body.removeChild(overlay));
+
+  const salvarBtn = document.createElement('button');
+  salvarBtn.className = 'btn btn-primary';
+  salvarBtn.textContent = 'Salvar';
+  salvarBtn.addEventListener('click', async () => {
+    salvarBtn.disabled = true; salvarBtn.textContent = 'Salvando...';
+    try {
+      // Coleta a ordem atual da lista e salva
+      const items = qsa('[data-edit-id]', lista);
+      const payload = [];
+      let rootNum = 0;
+      items.forEach(el => {
+        const id = parseInt(el.dataset.editId);
+        const parentId = el.dataset.parentId ? parseInt(el.dataset.parentId) : null;
+        const nome = el.querySelector('.edit-assunto-nome').value.trim();
+        if (!nome) return;
+        rootNum++;
+        payload.push({ id: id > 0 ? id : null, nome, parent_id: parentId, ordem: rootNum });
+      });
+      await api.put(`/api/assuntos/reordenar-completo`, { disciplina_id: discId, itens: payload });
+      showToast('Assuntos salvos!', 'success');
+      document.body.removeChild(overlay);
+      onSave();
+    } catch(e) {
+      showToast('Erro ao salvar: ' + (e.message || ''), 'error');
+    } finally {
+      salvarBtn.disabled = false; salvarBtn.textContent = 'Salvar';
+    }
+  });
+
+  footerBtns.append(cancelarBtn, salvarBtn);
+  mFooter.appendChild(footerBtns);
+  modal.append(mHeader, mBody, mFooter);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  function renderLista() {
+    lista.innerHTML = '';
+    const raizes = assuntos.filter(a => !a.parent_id).sort((a,b) => (a.ordem||0)-(b.ordem||0));
+    const filhosMap = {};
+    assuntos.forEach(a => {
+      if (a.parent_id) {
+        if (!filhosMap[a.parent_id]) filhosMap[a.parent_id] = [];
+        filhosMap[a.parent_id].push(a);
+      }
+    });
+
+    function renderItem(a, nivel) {
+      const el = document.createElement('div');
+      el.className = 'edit-assunto-item';
+      el.dataset.editId = a.id;
+      el.dataset.parentId = a.parent_id || '';
+      el.draggable = true;
+      el.style.paddingLeft = nivel === 0 ? '0' : nivel === 1 ? '20px' : '40px';
+
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 4px;border-radius:6px;';
+      row.style.cursor = 'default';
+
+      const handle = document.createElement('span');
+      handle.style.cssText = 'cursor:grab;color:var(--text-3);flex-shrink:0;';
+      handle.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="5" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="19" r="1"/></svg>`;
+
+      const numSpan = document.createElement('span');
+      numSpan.style.cssText = 'font-size:0.72rem;color:var(--text-3);min-width:24px;flex-shrink:0;';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'edit-assunto-nome form-control';
+      input.value = a.nome;
+      input.style.cssText = 'flex:1;font-size:0.84rem;padding:4px 8px;';
+
+      const addSubBtn = document.createElement('button');
+      addSubBtn.className = 'btn btn-outline btn-sm';
+      addSubBtn.style.cssText = 'font-size:0.7rem;padding:2px 7px;opacity:0;transition:opacity 0.15s;flex-shrink:0;';
+      addSubBtn.textContent = '+sub';
+      addSubBtn.addEventListener('click', () => {
+        if (a.id < 0 && !a.nome) { showToast('Salve o nome do assunto pai primeiro', 'error'); return; }
+        const novoId = -(Date.now());
+        const parentFilhos = assuntos.filter(x => x.parent_id === a.id);
+        assuntos.push({ id: novoId, nome: '', parent_id: a.id, ordem: parentFilhos.length + 1 });
+        renderLista();
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--text-3);padding:3px;opacity:0;transition:opacity 0.15s;flex-shrink:0;';
+      delBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`;
+      delBtn.addEventListener('click', () => {
+        // Remove o item e seus filhos
+        assuntos = assuntos.filter(x => x.id !== a.id && x.parent_id !== a.id);
+        renderLista();
+      });
+
+      row.addEventListener('mouseenter', () => { addSubBtn.style.opacity='1'; delBtn.style.opacity='1'; });
+      row.addEventListener('mouseleave', () => { addSubBtn.style.opacity='0'; delBtn.style.opacity='0'; });
+
+      if (nivel === 0) addSubBtn.style.display = '';
+      else addSubBtn.style.display = 'none'; // Só nível raiz pode ter sub (por ora)
+
+      row.append(handle, numSpan, input, addSubBtn, delBtn);
+      el.appendChild(row);
+
+      // Filhos
+      const filhos = (filhosMap[a.id] || []).sort((x,y) => (x.ordem||0)-(y.ordem||0));
+      filhos.forEach(f => el.appendChild(renderItem(f, nivel + 1)));
+
+      return el;
+    }
+
+    let rNum = 1;
+    raizes.forEach(a => { lista.appendChild(renderItem(a, 0)); rNum++; });
+    // Atualiza numeração visual
+    updateNumeracao();
+  }
+
+  function updateNumeracao() {
+    let r = 0;
+    qsa('[data-edit-id]', lista).forEach(el => {
+      const nivel = el.style.paddingLeft === '0px' || el.style.paddingLeft === '0' || !el.style.paddingLeft || el.dataset.parentId === '' ? 0 : 1;
+      if (nivel === 0) r++;
+      const numEl = el.querySelector('span[style*="color:var(--text-3)"]');
+      if (numEl) numEl.textContent = r + '.';
+    });
+  }
+
+  renderLista();
+}
+
+// ── ENDPOINT HELPER: reordenar-completo ──────────────────────────────────────
+// Nota: este modal usa /api/assuntos/reordenar-completo (novo endpoint)
+// que precisará ser adicionado ao server.js
+
+// ── MODAL DISCIPLINA ──────────────────────────────────────────────────────────
 function openDiscModal(id = null, onSave = null) {
-  openModal(id ? 'Editar Disciplina' : 'Nova Disciplina', `
-    <div class="form-group"><label>Nome *</label><input type="text" id="d-nome" required autofocus></div>
-    <div class="form-section">
-      <div class="form-section-title">📖 Teoria</div>
-      <div class="form-group"><label>Material</label><input type="text" id="d-teoria-material" placeholder="Ex: Livro do Estratégia, PDF..."></div>
-      <div class="form-group"><label>Link (opcional)</label><input type="url" id="d-teoria-link" placeholder="https://..."></div>
-    </div>
-    <div class="form-section">
-      <div class="form-section-title">📝 Resumo</div>
-      <div class="form-group"><label>Tipo</label><input type="text" id="d-resumo-tipo" placeholder="Ex: Mapa mental, Flashcards..."></div>
-      <div class="form-group"><label>Descrição</label><input type="text" id="d-resumo-descricao"></div>
-      <div class="form-group"><label>Link (opcional)</label><input type="url" id="d-resumo-link" placeholder="https://..."></div>
-    </div>
-    <div class="form-section">
-      <div class="form-section-title">📌 Estratégia</div>
-      <div class="form-group">
-        <div class="editor-toolbar">
-          <button type="button" class="editor-btn" onclick="document.execCommand('bold')"><b>B</b></button>
-          <button type="button" class="editor-btn" onclick="document.execCommand('italic')"><i>I</i></button>
-          <button type="button" class="editor-btn" onclick="document.execCommand('insertUnorderedList')">• Lista</button>
-        </div>
-        <div class="rich-editor" id="d-estrategia" contenteditable="true"></div>
-      </div>
-    </div>
-    <div class="form-actions">
-      <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" id="save-disc-btn">Salvar</button>
-    </div>
-  `);
+  const bodyEl = document.getElementById('modal-body');
+  const titleEl = document.getElementById('modal-title');
+  titleEl.textContent = id ? 'Editar Disciplina' : 'Nova Disciplina';
 
-  if (id) {
-    api.get('/api/disciplinas').then(discs => {
-      const d = discs.find(x => x.id == id);
-      if (!d) return;
-      qs('#d-nome').value = d.nome || '';
-      qs('#d-teoria-material').value = d.teoria_material || '';
-      qs('#d-teoria-link').value = d.teoria_link || '';
-      qs('#d-resumo-tipo').value = d.resumo_tipo || '';
-      qs('#d-resumo-descricao').value = d.resumo_descricao || '';
-      qs('#d-resumo-link').value = d.resumo_link || '';
-      qs('#d-estrategia').innerHTML = d.estrategia || '';
-    });
+  bodyEl.innerHTML = '';
+
+  const form = document.createElement('div');
+
+  function grupo(label, inputEl) {
+    const g = document.createElement('div');
+    g.className = 'form-group';
+    const l = document.createElement('label');
+    l.textContent = label;
+    g.append(l, inputEl);
+    return g;
   }
 
-  qs('#save-disc-btn').addEventListener('click', async () => {
-    const nome = qs('#d-nome').value.trim();
+  const nomeInput = Object.assign(document.createElement('input'), { type: 'text', id: 'disc-nome', placeholder: 'Ex: Direito Tributário' });
+  const teoriaInput = Object.assign(document.createElement('input'), { type: 'text', placeholder: 'Ex: PDF do Estratégia...' });
+  const teoriaLinkInput = Object.assign(document.createElement('input'), { type: 'url', placeholder: 'https://...' });
+  const resumoInput = Object.assign(document.createElement('input'), { type: 'text', placeholder: 'Ex: Mapa mental, Flashcards...' });
+  const resumoDescInput = Object.assign(document.createElement('input'), { type: 'text', placeholder: 'Descrição do resumo' });
+  const estrategiaInput = Object.assign(document.createElement('textarea'), { rows: 3, placeholder: 'Como você vai abordar esta disciplina...' });
+
+  [nomeInput, teoriaInput, teoriaLinkInput, resumoInput, resumoDescInput, estrategiaInput].forEach(el => el.className = 'form-control');
+
+  const sec = (titulo) => {
+    const d = document.createElement('div');
+    d.className = 'form-section-title';
+    d.textContent = titulo;
+    return d;
+  };
+
+  form.append(
+    grupo('Nome *', nomeInput),
+    sec('Estratégia'),
+    grupo('Estratégia de estudo', estrategiaInput),
+    sec('Material de Teoria'),
+    grupo('Material', teoriaInput),
+    grupo('Link (opcional)', teoriaLinkInput),
+    sec('Material de Resumo'),
+    grupo('Tipo', resumoInput),
+    grupo('Descrição', resumoDescInput),
+  );
+
+  const actions = document.createElement('div');
+  actions.className = 'form-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-outline';
+  cancelBtn.textContent = 'Cancelar';
+  cancelBtn.addEventListener('click', closeModal);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = 'Salvar';
+  saveBtn.addEventListener('click', async () => {
+    const nome = nomeInput.value.trim();
     if (!nome) { showToast('Nome obrigatório', 'error'); return; }
     const payload = {
       nome,
-      teoria_material: qs('#d-teoria-material').value.trim(),
-      teoria_link: qs('#d-teoria-link').value.trim(),
-      resumo_tipo: qs('#d-resumo-tipo').value.trim(),
-      resumo_descricao: qs('#d-resumo-descricao').value.trim(),
-      resumo_link: qs('#d-resumo-link').value.trim(),
-      estrategia: qs('#d-estrategia').innerHTML,
+      estrategia: estrategiaInput.value.trim(),
+      teoria_material: teoriaInput.value.trim(),
+      teoria_link: teoriaLinkInput.value.trim(),
+      resumo_tipo: resumoInput.value.trim(),
+      resumo_descricao: resumoDescInput.value.trim(),
     };
     try {
       if (id) await api.put(`/api/disciplinas/${id}`, payload);
@@ -432,185 +505,117 @@ function openDiscModal(id = null, onSave = null) {
       showToast('Erro: ' + (e.message || 'Não foi possível salvar'), 'error');
     }
   });
+
+  actions.append(cancelBtn, saveBtn);
+  form.appendChild(actions);
+  bodyEl.appendChild(form);
+
+  if (id) {
+    api.get('/api/disciplinas').then(discs => {
+      const d = discs.find(x => x.id == id);
+      if (!d) return;
+      nomeInput.value = d.nome || '';
+      estrategiaInput.value = d.estrategia || '';
+      teoriaInput.value = d.teoria_material || '';
+      teoriaLinkInput.value = d.teoria_link || '';
+      resumoInput.value = d.resumo_tipo || '';
+      resumoDescInput.value = d.resumo_descricao || '';
+    });
+  }
+
+  nomeInput.focus();
+  document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
-function openImportarModal(discId, onSave) {
-  openModal('Importar Assuntos (TechConcursos)', `
-    <p style="font-size:0.84rem;color:var(--text-2);margin-bottom:12px">
-      Cole o índice copiado do TechConcursos. O número vira hierarquia automaticamente — só o nome é salvo.
-    </p>
-    <div class="form-group">
-      <label>Conteúdo</label>
-      <textarea id="import-texto" style="min-height:200px;font-family:monospace;font-size:0.8rem" placeholder="01&#9;Contabilidade Básica&#10;01.01&#9;Conceito e Objeto"></textarea>
-    </div>
-    <div class="form-actions">
-      <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" id="importar-confirmar">Importar</button>
-    </div>
-  `);
+function openAssuntoModal(id, nome, discId, parentId, onSave) {
+  const bodyEl = document.getElementById('modal-body');
+  document.getElementById('modal-title').textContent = id ? 'Editar Assunto' : (parentId ? 'Novo Subassunto' : 'Novo Assunto');
+  bodyEl.innerHTML = '';
 
-  qs('#importar-confirmar').addEventListener('click', async () => {
-    const texto = qs('#import-texto').value.trim();
-    if (!texto) { showToast('Cole o conteúdo', 'error'); return; }
-    try {
-      const result = await api.post('/api/assuntos/importar', { disciplina_id: discId, texto });
-      closeModal();
-      showToast(`${result.inserted} assuntos importados!`, 'success');
-      if (onSave) onSave();
-    } catch(e) {
-      showToast('Erro ao importar: ' + e.message, 'error');
-    }
-  });
-}
+  const form = document.createElement('div');
+  const nomeInput = Object.assign(document.createElement('input'), { type: 'text', value: nome || '', className: 'form-control' });
 
-function openAssuntoModal(id, nomeAtual, disciplina_id, parent_id, onSave) {
-  const titulo = id ? 'Editar Assunto' : (parent_id ? 'Novo Subassunto' : 'Novo Assunto');
-  openModal(titulo, `
-    <div class="form-group"><label>Nome *</label><input type="text" id="a-nome" value="${nomeAtual || ''}" required autofocus></div>
-    <div class="form-actions">
-      <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-primary" id="save-assunto-btn">Salvar</button>
-    </div>
-  `);
-  qs('#a-nome').focus();
-  qs('#save-assunto-btn').addEventListener('click', async () => {
-    const nome = qs('#a-nome').value.trim();
-    if (!nome) { showToast('Nome obrigatório', 'error'); return; }
+  const g = document.createElement('div');
+  g.className = 'form-group';
+  const l = document.createElement('label');
+  l.textContent = 'Nome *';
+  g.append(l, nomeInput);
+
+  const actions = document.createElement('div');
+  actions.className = 'form-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-outline';
+  cancelBtn.textContent = 'Cancelar';
+  cancelBtn.addEventListener('click', closeModal);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = 'Salvar';
+  saveBtn.addEventListener('click', async () => {
+    const nomeTxt = nomeInput.value.trim();
+    if (!nomeTxt) { showToast('Nome obrigatório', 'error'); return; }
     if (id) {
-      await api.put(`/api/assuntos/${id}`, { nome, disciplina_id, parent_id: parent_id || null });
+      await api.put(`/api/assuntos/${id}`, { nome: nomeTxt });
     } else {
-      await api.post('/api/assuntos', { nome, disciplina_id, parent_id: parent_id || null });
+      await api.post('/api/assuntos', { nome: nomeTxt, disciplina_id: discId, parent_id: parentId || null });
     }
     closeModal();
     showToast('Assunto salvo!', 'success');
     if (onSave) onSave();
   });
+
+  actions.append(cancelBtn, saveBtn);
+  form.append(g, actions);
+  bodyEl.appendChild(form);
+  nomeInput.focus();
+  document.getElementById('modal-overlay').classList.remove('hidden');
 }
 
-// ── DISCIPLINA DETALHE (via dashboard) ───────────────────────────────────────
-async function renderDisciplinaDetalhe(container, params = {}) {
-  const { id, plan_id } = params;
-  if (!id) { container.innerHTML = '<p>Disciplina não encontrada.</p>'; return; }
+function openImportarModal(discId, onSave) {
+  const bodyEl = document.getElementById('modal-body');
+  document.getElementById('modal-title').textContent = 'Importar Assuntos';
+  bodyEl.innerHTML = '';
 
-  const stats = await api.get(`/api/stats/disciplina-plan/${id}` + qs_params({ plan_id }));
-  const d = stats.disciplina;
+  const p = document.createElement('p');
+  p.style.cssText = 'font-size:0.84rem;color:var(--text-2);margin-bottom:12px;';
+  p.textContent = 'Cole o índice copiado do TechConcursos. O número vira hierarquia automaticamente.';
 
-  container.innerHTML = `
-    <a class="back-link" id="back-btn">← Voltar</a>
-    <div class="page-header">
-      <div><div class="page-title">${d.nome}</div></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap" id="det-acoes"></div>
-    </div>
-    <div class="metrics-grid">
-      <div class="metric-card"><div class="metric-label">% Acerto</div><div class="metric-value">${stats.pct_acerto ? stats.pct_acerto + '%' : '—'}</div></div>
-      <div class="metric-card"><div class="metric-label">Questões</div><div class="metric-value">${(stats.total_questoes||0).toLocaleString('pt-BR')}</div></div>
-      <div class="metric-card"><div class="metric-label">Avanço</div><div class="metric-value">${stats.pct_avanco ? stats.pct_avanco + '%' : '—'}</div></div>
-      <div class="metric-card"><div class="metric-label">Assuntos na Meta</div><div class="metric-value">${stats.assuntos_na_meta}/${stats.assuntos.length}</div></div>
-    </div>
-    <div class="tabs">
-      <button class="tab-btn active" data-tab="assuntos">Assuntos</button>
-      <button class="tab-btn" data-tab="historico">Histórico</button>
-    </div>
-    <div class="tab-panel active" data-panel="assuntos">
-      <div class="assunto-tree" id="assuntos-tree-det"></div>
-    </div>
-    <div class="tab-panel" data-panel="historico">
-      <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>Data</th><th>Assuntos</th><th>Tipo</th><th class="td-right">Questões</th><th class="td-right">% Acerto</th><th></th></tr></thead>
-        <tbody id="hist-tbody"></tbody>
-      </table></div></div>
-    </div>
-  `;
+  const g = document.createElement('div');
+  g.className = 'form-group';
+  const l = document.createElement('label');
+  l.textContent = 'Conteúdo';
+  const ta = Object.assign(document.createElement('textarea'), {
+    style: 'min-height:200px;font-family:monospace;font-size:0.8rem;',
+    placeholder: '01\tContabilidade Básica\n01.01\tConceito e Objeto'
+  });
+  ta.className = 'form-control';
+  g.append(l, ta);
 
-  qs('#back-btn', container).addEventListener('click', () => window._app.navigate(window._app.previousPage || 'disciplinas'));
+  const actions = document.createElement('div');
+  actions.className = 'form-actions';
 
-  const acoesDet = qs('#det-acoes', container);
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-outline';
+  cancelBtn.textContent = 'Cancelar';
+  cancelBtn.addEventListener('click', closeModal);
 
-  const editDetBtn = document.createElement('button');
-  editDetBtn.className = 'btn-action btn-action-edit';
-  editDetBtn.title = 'Editar disciplina';
-  editDetBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-  editDetBtn.addEventListener('click', () => openDiscModal(id, () => renderDisciplinaDetalhe(container, params)));
-
-  const delDetBtn = document.createElement('button');
-  delDetBtn.className = 'btn-action btn-action-delete';
-  delDetBtn.title = 'Apagar disciplina';
-  delDetBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>`;
-  delDetBtn.addEventListener('click', async () => {
-    if (!confirm('Apagar disciplina?')) return;
-    await api.delete(`/api/disciplinas/${id}`);
-    showToast('Disciplina apagada');
-    window._app.navigate('disciplinas');
+  const importBtn = document.createElement('button');
+  importBtn.className = 'btn btn-primary';
+  importBtn.textContent = 'Importar';
+  importBtn.addEventListener('click', async () => {
+    const texto = ta.value.trim();
+    if (!texto) { showToast('Cole o conteúdo primeiro', 'error'); return; }
+    await api.post('/api/assuntos/importar', { disciplina_id: discId, texto });
+    closeModal();
+    showToast('Assuntos importados!', 'success');
+    if (onSave) onSave();
   });
 
-  acoesDet.appendChild(editDetBtn);
-  acoesDet.appendChild(delDetBtn);
+  actions.append(cancelBtn, importBtn);
 
-  // Assuntos simples (só visualização)
-  const treeEl = qs('#assuntos-tree-det', container);
-  const assuntos = await api.get(`/api/assuntos?disciplina_id=${id}`);
-  const statsMap = {};
-  stats.assuntos.forEach(a => { statsMap[a.id] = a; (a.filhos||[]).forEach(f => { statsMap[f.id] = f; }); });
-
-  if (!assuntos.length) { treeEl.innerHTML = renderEmptyState('▸', 'Nenhum assunto.'); }
-  else {
-    const raizes = assuntos.filter(a => !a.parent_id).sort((a,b) => (a.ordem||0)-(b.ordem||0));
-    const fMap = {};
-    assuntos.forEach(a => { if (a.parent_id) { if(!fMap[a.parent_id]) fMap[a.parent_id]=[]; fMap[a.parent_id].push(a); } });
-    let n = {};
-    function renderDet(a, nivel=0) {
-      const filhos = (fMap[a.id]||[]).sort((x,y)=>(x.ordem||0)-(y.ordem||0));
-      const key = a.parent_id||'root'; n[key]=(n[key]||0)+1;
-      const num = String(n[key]).padStart(2,'0');
-      const el = document.createElement('div');
-      el.className = 'assunto-tree-item';
-      el.style.paddingLeft = (nivel*20) + 'px';
-      el.dataset.id = a.id;
-      const h = document.createElement('div');
-      h.className = 'assunto-tree-header';
-      h.innerHTML = `<span class="assunto-tree-toggle">${filhos.length?'▶':'·'}</span><span class="assunto-num">${num}</span><span class="assunto-tree-nome">${a.nome}</span>${acertoBadge(statsMap[a.id]?.pct_acerto)}`;
-      el.appendChild(h);
-      if (filhos.length) {
-        const fc = document.createElement('div');
-        fc.className = 'assunto-children hidden';
-        fc.id = `filhos-det-${a.id}`;
-        filhos.forEach(f => fc.appendChild(renderDet(f, nivel+1)));
-        el.appendChild(fc);
-        h.addEventListener('click', () => {
-          fc.classList.toggle('hidden');
-          h.querySelector('.assunto-tree-toggle').textContent = fc.classList.contains('hidden') ? '▶' : '▼';
-        });
-      }
-      return el;
-    }
-    raizes.forEach(a => treeEl.appendChild(renderDet(a, 0)));
-  }
-
-  // Histórico
-  const tbody = qs('#hist-tbody', container);
-  if (!stats.sessoes.length) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-3)">Nenhuma sessão.</td></tr>`;
-  } else {
-    tbody.innerHTML = stats.sessoes.map(s => {
-      const pct = s.total_questoes > 0 ? ((s.acertos/s.total_questoes)*100).toFixed(1) : null;
-      const assuntosStr = s.assuntos && s.assuntos.length ? s.assuntos.map(a => a.nome).join(', ') : '—';
-      return `<tr>
-        <td>${formatDate(s.data)}</td>
-        <td style="font-size:0.8rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${assuntosStr}</td>
-        <td><span class="acerto-badge acerto-none">${s.tipo}</span></td>
-        <td class="td-right">${s.total_questoes||0}</td>
-        <td class="td-right">${acertoBadge(pct)}</td>
-        <td><button class="btn-action btn-action-delete del-s" data-id="${s.id}" title="Apagar sessão"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button></td>
-      </tr>`;
-    }).join('');
-    qsa('.del-s', tbody).forEach(btn => {
-      btn.addEventListener('click', async () => {
-        if (!confirm('Apagar sessão?')) return;
-        await api.delete(`/api/sessoes/${btn.dataset.id}`);
-        renderDisciplinaDetalhe(container, params);
-      });
-    });
-  }
-
-  initTabs(container);
+  const form = document.createElement('div');
+  form.append(p, g, actions);
+  bodyEl.appendChild(form);
+  document.getElementById('modal-overlay').classList.remove('hidden');
 }

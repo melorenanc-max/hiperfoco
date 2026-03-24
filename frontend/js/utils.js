@@ -30,6 +30,28 @@ function diasFaltando(iso) {
   return Math.ceil((prova - hoje) / (1000 * 60 * 60 * 24));
 }
 
+function semanasRestantes(iso) {
+  const dias = diasFaltando(iso);
+  if (dias === null) return null;
+  return Math.ceil(dias / 7);
+}
+
+function semanasPassadas(dataInicioISO) {
+  if (!dataInicioISO) return 0;
+  const inicio = new Date(dataInicioISO + 'T00:00:00');
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const dias = Math.ceil((hoje - inicio) / (1000 * 60 * 60 * 24));
+  return Math.max(0, Math.ceil(dias / 7));
+}
+
+function formatTempo(minutos) {
+  if (!minutos) return '—';
+  if (minutos < 60) return `${minutos}min`;
+  const h = Math.floor(minutos / 60);
+  const m = minutos % 60;
+  return m > 0 ? `${h}h${m}min` : `${h}h`;
+}
+
 function acertoClass(pct) {
   if (pct === null || pct === undefined || pct === '') return 'acerto-none';
   const v = parseFloat(pct);
