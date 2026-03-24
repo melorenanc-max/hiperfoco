@@ -10,7 +10,7 @@
     'planejamento-detalhe': renderPlanejamentoDetalhe,
     'planejamento-disciplina': renderPlanejamentoDisciplina,
     'historico': renderHistorico,
-    'estatisticas': renderHistorico, // merged into historico
+    'estatisticas': renderHistorico,
     'configuracoes': renderConfiguracoes,
   };
 
@@ -28,11 +28,11 @@
       const linkPage = link.dataset.page;
       const activePage = ['disciplina-detalhe'].includes(page) ? 'disciplinas'
         : ['planejamento-detalhe','planejamento-disciplina'].includes(page) ? 'planejamento'
+        : ['estatisticas'].includes(page) ? 'historico'
         : page;
       link.classList.toggle('active', linkPage === activePage);
     });
 
-    // Fecha sidebar no mobile
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('sidebar-overlay').classList.remove('visible');
 
@@ -103,13 +103,15 @@
     });
   }
 
-  // Clique no ícone do brand quando collapsed expande
-  document.querySelector('.sidebar-brand').addEventListener('click', e => {
-    if (sidebar.classList.contains('collapsed') && !e.target.closest('button')) {
-      localStorage.setItem(COLLAPSED_KEY, '0');
-      applySidebarState();
-    }
-  });
+  const brandEl = document.querySelector('.sidebar-brand');
+  if (brandEl) {
+    brandEl.addEventListener('click', e => {
+      if (sidebar.classList.contains('collapsed') && !e.target.closest('button')) {
+        localStorage.setItem(COLLAPSED_KEY, '0');
+        applySidebarState();
+      }
+    });
+  }
 
   applySidebarState();
 

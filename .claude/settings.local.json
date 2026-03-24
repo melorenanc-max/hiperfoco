@@ -28,7 +28,14 @@
       "Bash(node --check frontend/js/app.js)",
       "Bash(node --check frontend/js/components.js)",
       "Bash(node --check frontend/js/utils.js)",
-      "Bash(node --check frontend/js/pages/disciplinas.js)"
+      "Bash(node --check frontend/js/pages/disciplinas.js)",
+      "Bash(node --check \"C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\frontend\\\\js\\\\pages\\\\registro.js\")",
+      "Bash(python -c \":*)",
+      "Bash(powershell -Command \"Expand-Archive -Path 'C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\hiperfoco_correcoes_cirurgicas.docx' -DestinationPath 'C:\\\\Users\\\\melor\\\\AppData\\\\Local\\\\Temp\\\\docx_ext' -Force; Write-Host 'done'\")",
+      "Bash(powershell -Command \"Copy-Item 'C:\\\\Users\\\\melor\\\\OneDrive\\\\Desktop\\\\Hiperfoco\\\\hiperfoco_correcoes_cirurgicas.docx' 'C:\\\\Users\\\\melor\\\\AppData\\\\Local\\\\Temp\\\\doc.zip'; Expand-Archive -Path 'C:\\\\Users\\\\melor\\\\AppData\\\\Local\\\\Temp\\\\doc.zip' -DestinationPath 'C:\\\\Users\\\\melor\\\\AppData\\\\Local\\\\Temp\\\\docx_ext' -Force; Write-Host 'done'\")",
+      "Bash(echo \"OK: $f\")",
+      "Bash(echo \"FAIL: $f\")",
+      "Bash(done)"
     ]
   }
 }
