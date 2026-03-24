@@ -477,3 +477,8 @@ async function openEditEstudoModal(sessaoId, disciplinas, concursos, todasBancas
     if (onSave) onSave();
   });
 }
+
+// Alias usado por historico.js
+function openEditSessaoModal(sessaoId, disciplinas, concursos, todasBancas, onSave) {
+  return openEditEstudoModal(sessaoId, disciplinas, concursos, todasBancas, onSave);
+}

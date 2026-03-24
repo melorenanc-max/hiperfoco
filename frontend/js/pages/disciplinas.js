@@ -619,3 +619,79 @@ function openImportarModal(discId, onSave) {
   bodyEl.appendChild(form);
   document.getElementById('modal-overlay').classList.remove('hidden');
 }
+
+// ── DISCIPLINA DETALHE PAGE ───────────────────────────────────────────────────
+async function renderDisciplinaDetalhe(container, params = {}) {
+  const discId = params.id;
+  if (!discId) { window._app.navigate('disciplinas'); return; }
+
+  container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-3);font-size:0.9rem">Carregando...</div>`;
+
+  const [discs, assuntos] = await Promise.all([
+    api.get('/api/disciplinas'),
+    api.get(`/api/assuntos?disciplina_id=${discId}`)
+  ]);
+  const disc = discs.find(d => d.id == discId);
+  if (!disc) { window._app.navigate('disciplinas'); return; }
+
+  container.innerHTML = `
+    <div class="page-header">
+      <div>
+        <button class="btn btn-outline btn-sm" id="btn-back-disc" style="margin-bottom:8px">← Disciplinas</button>
+        <div class="page-title">${disc.nome}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" id="btn-edit-disc">Editar</button>
+    </div>
+    <div id="disc-detalhe-body"></div>
+  `;
+
+  qs('#btn-back-disc', container).addEventListener('click', () => window._app.navigate('disciplinas'));
+  qs('#btn-edit-disc', container).addEventListener('click', () => openDiscModal(discId, () => renderDisciplinaDetalhe(container, params)));
+
+  const body = qs('#disc-detalhe-body', container);
+
+  // Info grid
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px;';
+
+  const reload = () => renderDisciplinaDetalhe(container, params);
+  grid.appendChild(makeInfoCard('Estratégia', disc.estrategia, 'estrategia', 'textarea', discId, reload));
+
+  const rightCol = document.createElement('div');
+  rightCol.style.cssText = 'display:flex;flex-direction:column;gap:12px;';
+  rightCol.appendChild(makeInfoCard('Material de Teoria', disc.teoria_material, 'teoria_material', 'text', discId, reload));
+  rightCol.appendChild(makeInfoCard('Material de Resumo', disc.resumo_descricao || disc.resumo_tipo, 'resumo_descricao', 'text', discId, reload));
+  grid.appendChild(rightCol);
+  body.appendChild(grid);
+
+  // Assuntos section
+  const assuntosSection = document.createElement('div');
+  assuntosSection.className = 'config-card';
+
+  const assuntosHeader = document.createElement('div');
+  assuntosHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;';
+
+  const assuntosTitle = document.createElement('div');
+  assuntosTitle.className = 'config-section-title';
+  assuntosTitle.style.margin = '0';
+  assuntosTitle.textContent = 'Assuntos';
+
+  const editAssuntosBtn = document.createElement('button');
+  editAssuntosBtn.className = 'btn btn-outline btn-sm';
+  editAssuntosBtn.textContent = 'Editar assuntos';
+  editAssuntosBtn.addEventListener('click', () => openEditarAssuntosModal(discId, assuntos, reload));
+
+  assuntosHeader.append(assuntosTitle, editAssuntosBtn);
+  assuntosSection.appendChild(assuntosHeader);
+
+  if (!assuntos.length) {
+    const empty = document.createElement('p');
+    empty.className = 'text-muted text-small';
+    empty.textContent = 'Nenhum assunto cadastrado.';
+    assuntosSection.appendChild(empty);
+  } else {
+    assuntosSection.appendChild(buildAssuntoAccordion(assuntos));
+  }
+
+  body.appendChild(assuntosSection);
+}
