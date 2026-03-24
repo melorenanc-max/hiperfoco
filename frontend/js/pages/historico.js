@@ -739,3 +739,87 @@ async function renderHistorico(container) {
 
   load();
 }
+
+// ── MODAL EDITAR SESSÃO ───────────────────────────────────────────────────────
+async function openEditSessaoModal(sessaoId, disciplinas, concursos, todasBancas, onSave) {
+  const s = await api.get(`/api/sessoes/${sessaoId}`);
+  if (!s) return;
+
+  const assuntos = s.disciplina_id ? await api.get(`/api/assuntos?disciplina_id=${s.disciplina_id}`) : [];
+  const selectedIds = s.assuntos ? s.assuntos.map(a => a.id) : [];
+  const msId = 'edit-sessao-ms';
+  const { html: msHtml } = buildAssuntosMultiSelect(assuntos, selectedIds, msId);
+
+  const bancaEhOutra = s.banca && !BANCAS_PADRAO.includes(s.banca) && s.banca !== '';
+
+  openModal('Editar Sessão', `
+    <div class="form-row">
+      <div class="form-group"><label>Data *</label><input type="date" id="es-data" value="${s.data}"></div>
+      <div class="form-group"><label>Tipo *</label>
+        <select id="es-tipo">
+          <option value="questoes" ${s.tipo==='questoes'?'selected':''}>Questões</option>
+          <option value="teorico" ${s.tipo==='teorico'?'selected':''}>Teórico</option>
+          <option value="revisao" ${s.tipo==='revisao'?'selected':''}>Revisão</option>
+          <option value="simulado" ${s.tipo==='simulado'?'selected':''}>Simulado</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Disciplina *</label>
+        <select id="es-disc">
+          ${disciplinas.map(d => `<option value="${d.id}" ${d.id==s.disciplina_id?'selected':''}>${d.nome}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label>Planejamento</label>
+        <select id="es-conc">
+          <option value="">—</option>
+          ${concursos.map(c => `<option value="${c.id}" ${c.id==s.concurso_id?'selected':''}>${c.nome}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>Assuntos</label>${msHtml}</div>
+    <div class="form-row-3">
+      <div class="form-group"><label>Questões</label><input type="number" id="es-total" value="${s.questoes_feitas??s.total_questoes??0}" min="0"></div>
+      <div class="form-group"><label>Acertos</label><input type="number" id="es-acertos" value="${s.questoes_acertadas??s.acertos??0}" min="0"></div>
+      <div class="form-group"><label>Banca</label>
+        <select id="es-banca">
+          <option value="">—</option>
+          ${BANCAS_PADRAO.map(b => `<option value="${b}" ${b===s.banca?'selected':''}>${b}</option>`).join('')}
+          ${bancaEhOutra ? `<option value="${s.banca}" selected>${s.banca}</option>` : ''}
+          <option value="__outra__">+ Outra banca...</option>
+        </select>
+        <input type="text" id="es-banca-outra" class="${bancaEhOutra?'':'hidden'}" value="${bancaEhOutra?s.banca:''}" style="margin-top:6px">
+      </div>
+    </div>
+    <div class="form-group"><label>Observações</label><textarea id="es-obs" style="min-height:80px">${s.observacoes||''}</textarea></div>
+    <div class="form-actions">
+      <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="save-edit-sessao">Salvar</button>
+    </div>
+  `);
+
+  qs('#es-banca')?.addEventListener('change', () => {
+    const outra = qs('#es-banca-outra');
+    outra.classList.toggle('hidden', qs('#es-banca').value !== '__outra__');
+    if (qs('#es-banca').value === '__outra__') outra.focus();
+  });
+
+  qs('#save-edit-sessao').addEventListener('click', async () => {
+    const banca = qs('#es-banca').value === '__outra__' ? qs('#es-banca-outra').value.trim() : qs('#es-banca').value;
+    const assunto_ids = getMultiSelectValues(msId);
+    await api.put(`/api/sessoes/${sessaoId}`, {
+      data: qs('#es-data').value,
+      disciplina_id: qs('#es-disc').value,
+      concurso_id: qs('#es-conc').value || null,
+      tipo: qs('#es-tipo').value,
+      total_questoes: parseInt(qs('#es-total').value)||0,
+      acertos: parseInt(qs('#es-acertos').value)||0,
+      banca,
+      observacoes: qs('#es-obs').value.trim(),
+      assunto_ids,
+    });
+    closeModal();
+    showToast('Sessão atualizada!', 'success');
+    if (onSave) onSave();
+  });
+}

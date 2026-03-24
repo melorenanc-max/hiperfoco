@@ -27,17 +27,16 @@ async function renderConfiguracoes(container) {
 
     <div class="config-section">
       <div class="config-section-title">Preferências</div>
-      <div class="config-card" id="cfg-bancas-section">
+      <div class="config-card">
         <div class="config-item">
-          <div style="flex:1">
-            <div class="config-item-label">Bancas organizadoras</div>
-            <div class="config-item-desc">Bancas disponíveis para seleção nos registros de estudo e planejamento.</div>
+          <div>
+            <div class="config-item-label">Início da semana</div>
+            <div class="config-item-desc">Primeiro dia exibido no Ciclo Semanal.</div>
           </div>
-        </div>
-        <div id="cfg-bancas-list" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;"></div>
-        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-          <input type="text" id="cfg-nova-banca" placeholder="Nome da banca" style="flex:1;max-width:220px">
-          <button class="btn btn-primary btn-sm" id="cfg-add-banca">+ Adicionar</button>
+          <select id="cfg-inicio-semana">
+            <option value="segunda">Segunda-feira</option>
+            <option value="domingo">Domingo</option>
+          </select>
         </div>
       </div>
     </div>
@@ -97,56 +96,15 @@ async function renderConfiguracoes(container) {
     </div>
   `;
 
-  // ── BANCAS MANAGEMENT ────────────────────────────────────────────────────────
-  async function loadBancas() {
-    const list = qs('#cfg-bancas-list', container);
-    list.innerHTML = '';
-    try {
-      const bancas = await api.get('/api/bancas');
-      if (!bancas.length) {
-        list.innerHTML = '<span style="font-size:0.82rem;color:var(--text-3)">Nenhuma banca cadastrada.</span>';
-        return;
-      }
-      bancas.forEach(b => {
-        const tag = document.createElement('span');
-        tag.style.cssText = 'display:inline-flex;align-items:center;gap:5px;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:0.82rem;';
-        tag.textContent = b.nome;
-        const del = document.createElement('button');
-        del.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--text-3);padding:0;line-height:1;font-size:0.9rem;';
-        del.textContent = '×';
-        del.title = 'Remover banca';
-        del.addEventListener('click', async () => {
-          if (!confirm(`Remover a banca "${b.nome}"?`)) return;
-          await api.delete(`/api/bancas/${b.id}`);
-          loadBancas();
-        });
-        tag.appendChild(del);
-        list.appendChild(tag);
-      });
-    } catch(e) {
-      list.innerHTML = '<span style="font-size:0.82rem;color:var(--red)">Erro ao carregar bancas.</span>';
-    }
-  }
-
-  qs('#cfg-add-banca', container).addEventListener('click', async () => {
-    const input = qs('#cfg-nova-banca', container);
-    const nome = input.value.trim();
-    if (!nome) { showToast('Digite o nome da banca', 'error'); return; }
-    try {
-      await api.post('/api/bancas', { nome });
-      input.value = '';
-      showToast('Banca adicionada!', 'success');
-      loadBancas();
-    } catch(e) {
-      showToast('Erro ao adicionar banca', 'error');
-    }
+  // ── PREFERÊNCIAS ──────────────────────────────────────────────────────────────
+  api.get('/api/config/inicio_semana').then(r => {
+    const sel = qs('#cfg-inicio-semana', container);
+    if (sel && r && r.value) sel.value = r.value;
+    if (sel) sel.addEventListener('change', () => api.post('/api/config/inicio_semana', { value: sel.value }));
+  }).catch(() => {
+    const sel = qs('#cfg-inicio-semana', container);
+    if (sel) sel.addEventListener('change', () => api.post('/api/config/inicio_semana', { value: sel.value }).catch(() => {}));
   });
-
-  qs('#cfg-nova-banca', container).addEventListener('keydown', e => {
-    if (e.key === 'Enter') qs('#cfg-add-banca', container).click();
-  });
-
-  loadBancas();
 
   async function zerarComConfirmacao(msg, msg2, endpoint, successMsg) {
     if (!confirm(msg)) return;
